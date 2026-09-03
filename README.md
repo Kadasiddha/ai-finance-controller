@@ -48,7 +48,7 @@ workflow, AI governance/evaluation tooling.
 
 ## Status
 
-**Working end-to-end (46 passing tests, verified from a clean venv):**
+**Working end-to-end (49 passing tests, verified from a clean venv):**
 upload/read any 2 or all 3 sources → get back confirmed matches and an
 honest, reason-tagged exception list. `app/reconcile.py` is the entry
 point — `reconcile({"order_ledger": [...], "razorpay_settlement": [...]})`
@@ -59,9 +59,12 @@ two) raises rather than silently doing nothing.
 
 - **`app/parsers/razorpay_settlement.py`** — real. Built against Razorpay's
   documented Settlement Recon API schema, including paise→rupee conversion,
-  Unix-timestamp handling, and computing the *net* settled amount
-  (`amount - fee - tax`) rather than the gross transaction amount — the
-  net is what actually reaches the bank, which is the whole point.
+  Unix-timestamp handling, and computing a *signed net* amount
+  (`(credit - debit) - fee - tax`) rather than the unsigned gross `amount`
+  column — a refund row carries the same positive gross `amount` as the
+  payment it reverses, with direction only ever signaled by `debit`/`credit`.
+  Reading the gross column directly, as an earlier version did, silently
+  treated every refund as more incoming money instead of money leaving.
 - **`app/parsers/order_ledger.py`** — built against Shopify's real,
   documented order-export CSV schema (still a stand-in for whatever the
   user's own system exports, but grounded in a real reference rather than
@@ -71,7 +74,10 @@ two) raises rather than silently doing nothing.
   the realistic case: banks truncate narrations, dropping the trailing
   digits that make a UTR unique. A truncated UTR falls through to fuzzy
   matching instead of winning an exact match — that's the intended
-  behavior, not a bug.
+  behavior, not a bug. Reads both `Deposit` and `Withdrawal` into a single
+  signed `amount` (`deposit - withdrawal`) — an earlier version only read
+  `Deposit` and skipped every `Withdrawal` row outright, meaning a refund
+  or cashback payout leaving the account was invisible to the engine.
 - **`app/matching/exact.py`** — tier 1, plus `amounts_reconcile`: a shared
   reference alone isn't proof of a real match (a duplicate/misapplied UTR
   can share a key by error) — a matched group's amounts must actually add
@@ -114,13 +120,16 @@ two) raises rather than silently doing nothing.
   evaluator actually catches a false match rather than just reporting
   zeros because the current engine happens to behave.
 
-**Known, explicitly out-of-scope gaps** (asked about directly, worth
-stating plainly rather than leaving implicit): refunds/cashbacks/money
-flowing back out are not handled yet — the bank-statement parser only
-reads the `Deposit` column, skipping `Withdrawal` entirely, and nothing
-nets a refund against its original payment even though Razorpay's own
-settlement schema carries a `payment_id` on refund rows for exactly that
-purpose. This is the `REFUND_OR_CHARGEBACK_CONFLICT` exception code
-already declared in the model but not yet wired to real logic.
+**Refunds and cashbacks (money flowing back out)** are handled — asked
+about directly, and a real gap when first checked. Every amount in the
+pipeline is now signed (`(credit - debit) - fee - tax` for settlement rows,
+`deposit - withdrawal` for bank rows), so a refund naturally *subtracts*
+from a batch total instead of needing bespoke refund-matching logic:
+`amounts_reconcile`'s existing sum-based check already nets a refund
+against the payment it reverses for free, as long as both rows share the
+same `settlement_utr` batch. `REFUND_OR_CHARGEBACK_CONFLICT` remains
+reserved for a refund that genuinely can't be netted this way (no shared
+batch, no counterpart) — still not wired to real logic, since that needs
+a real ambiguous example to design against, same as tier 3.
 
 Run tests: `pip install -r requirements.txt && pytest tests/ -v`

@@ -16,6 +16,7 @@ FIXTURE_CSV = """Date,Narration,Reference,Withdrawal,Deposit,Balance
 2026-01-03,NEFT CR:RZRP173069230703 RAZORPAY SOFTWARE PRIVATE,,0,2933.00,152933.00
 2026-01-05,ATM WDL CASH,,5000,0,147933.00
 2026-01-06,NEFT CR:RZRP17306923 RAZORPAY SOFTWARE,,0,1000.00,148933.00
+2026-01-08,REFUND DR:RZRP1000000009 RAZORPAY SOFTWARE PRIVATE,,650.00,0,148283.00
 """
 
 
@@ -44,9 +45,12 @@ class TestUtrExtraction:
 
 
 class TestParseBankStatement:
-    def test_withdrawals_are_excluded(self, statement_csv: Path):
+    def test_all_nonzero_rows_are_included(self, statement_csv: Path):
+        # Withdrawals are no longer dropped -- a refund/cashback payout is
+        # money leaving the account and must be visible to the engine,
+        # same as the unrelated ATM withdrawal.
         transactions = parse_bank_statement(statement_csv)
-        assert len(transactions) == 2  # the ATM withdrawal row is dropped
+        assert len(transactions) == 4
 
     def test_deposit_amount_and_date(self, statement_csv: Path):
         transactions = parse_bank_statement(statement_csv)
@@ -54,14 +58,27 @@ class TestParseBankStatement:
         assert first.amount == Decimal("2933.00")
         assert str(first.date) == "2026-01-03"
 
+    def test_withdrawal_is_a_negative_amount(self, statement_csv: Path):
+        transactions = parse_bank_statement(statement_csv)
+        atm_withdrawal = next(t for t in transactions if "ATM" in (t.description or ""))
+        assert atm_withdrawal.amount == Decimal("-5000")
+
+    def test_refund_payout_is_a_negative_amount_with_utr_extracted(self, statement_csv: Path):
+        transactions = parse_bank_statement(statement_csv)
+        refund_row = next(t for t in transactions if "REFUND" in (t.description or ""))
+        assert refund_row.amount == Decimal("-650.00")
+        assert refund_row.settlement_utr == "RZRP1000000009"
+
     def test_utr_populated_when_extractable(self, statement_csv: Path):
         transactions = parse_bank_statement(statement_csv)
         assert transactions[0].settlement_utr == "RZRP173069230703"
 
     def test_truncated_utr_is_still_captured(self, statement_csv: Path):
         transactions = parse_bank_statement(statement_csv)
-        truncated_row = transactions[1]
-        assert truncated_row.settlement_utr == "RZRP17306923"
+        truncated_row = next(
+            t for t in transactions if t.settlement_utr == "RZRP17306923"
+        )
+        assert truncated_row.amount == Decimal("1000.00")
 
     def test_missing_required_column_raises(self, tmp_path: Path):
         bad_csv = tmp_path / "bad.csv"

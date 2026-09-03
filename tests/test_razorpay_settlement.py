@@ -40,6 +40,15 @@ def test_converts_paise_to_rupees(settlement_csv: Path):
     assert payment.amount == Decimal("1952.80")
 
 
+def test_refund_amount_is_signed_negative(settlement_csv: Path):
+    # debit=50000 paise, credit=0 -- money leaving, not the unsigned gross
+    # `amount` column (also 50000). Confirms the parser reads debit/credit
+    # for direction rather than the direction-less gross amount.
+    transactions = parse_settlement_report(settlement_csv)
+    refund = next(t for t in transactions if t.source_row_id == "rfnd_DEF456")
+    assert refund.amount == Decimal("-500.00")
+
+
 def test_gross_amount_preserved_in_raw(settlement_csv: Path):
     transactions = parse_settlement_report(settlement_csv)
     payment = next(t for t in transactions if t.source_row_id == "pay_ABC123")

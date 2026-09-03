@@ -5,18 +5,26 @@ Settlement Recon API response (razorpay.com/docs/api/settlements/fetch-recon/),
 which is also what the dashboard's downloadable combined settlement CSV
 export uses. Column names below match that documented schema exactly.
 
-Three things about Razorpay's convention that are easy to get wrong:
+Four things about Razorpay's convention that are easy to get wrong:
 - Amounts (`amount`, `fee`, `tax`, `debit`, `credit`) are in currency
   subunits (paise for INR), not rupees -- must divide by 100.
 - `created_at`/`settled_at` are Unix timestamps, not date strings.
-- `amount` is the GROSS transaction amount, before Razorpay's fee and tax
-  are deducted -- it is NOT what actually lands in the bank. This
-  project's own premise is that a ₹2,000 sale arrives as ₹1,953 once fee
-  and tax come off the top, so `Transaction.amount` here is deliberately
-  the NET amount (`amount - fee - tax`) -- what actually moves -- with
-  the original gross amount, fee, and tax preserved in `raw` for
-  reference. Getting this wrong would silently break every match against
-  the bank statement, which only ever sees net amounts.
+- `amount` is the unsigned GROSS transaction amount -- it does NOT tell you
+  direction. A refund row has the same positive `amount` as the payment it
+  reverses; the only place direction actually lives is `debit`/`credit`
+  (one of the two is populated, the other is zero, depending on whether
+  money left or arrived). Using `amount` directly, as an earlier version
+  of this parser did, silently treats every refund as if it were more
+  incoming money instead of money going back out -- a real bug found and
+  fixed here.
+- `Transaction.amount` is therefore `(credit - debit) - fee - tax`: signed,
+  and net of fee/tax -- what actually moves, in the direction it actually
+  moves. This is also what makes refund-aware netting work for free: when
+  several settlement rows (a payment plus a refund against it) are summed
+  by `amounts_reconcile` in a shared-UTR batch, a correctly-signed refund
+  naturally subtracts rather than needing special-cased refund logic.
+  Original gross `amount`/`debit`/`credit`/`fee`/`tax` are preserved in
+  `raw` for reference.
 
 This is the file that links the other two sources together:
 - `order_id` ties a settlement row back to the order ledger.
@@ -34,7 +42,8 @@ from app.models import Transaction
 REQUIRED_COLUMNS = {
     "entity_id",
     "type",
-    "amount",
+    "debit",
+    "credit",
     "fee",
     "tax",
     "created_at",
@@ -73,10 +82,11 @@ def parse_settlement_report(path: str | Path) -> list[Transaction]:
             )
 
         for row in reader:
-            gross = _paise_to_rupees(row["amount"])
+            credit = _paise_to_rupees(row["credit"])
+            debit = _paise_to_rupees(row["debit"])
             fee = _paise_to_rupees(row["fee"])
             tax = _paise_to_rupees(row["tax"])
-            net = gross - fee - tax
+            net = (credit - debit) - fee - tax
 
             transactions.append(
                 Transaction(

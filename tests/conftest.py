@@ -82,10 +82,11 @@ def _write_settlement_csv(path: Path) -> None:
     with path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(
-            ["entity_id", "type", "amount", "fee", "tax", "created_at", "settlement_utr", "order_id"]
+            ["entity_id", "type", "debit", "credit", "fee", "tax", "created_at", "settlement_utr", "order_id"]
         )
         for entity_id, order_id, gross, fee, tax, utr, created_at in SETTLEMENT_ROWS:
-            writer.writerow([entity_id, "payment", gross, fee, tax, created_at, utr, order_id])
+            # Fixture rows are all payments (money in) -- credit=gross, debit=0.
+            writer.writerow([entity_id, "payment", "0", gross, fee, tax, created_at, utr, order_id])
 
 
 def _write_bank_statement_csv(path: Path) -> None:

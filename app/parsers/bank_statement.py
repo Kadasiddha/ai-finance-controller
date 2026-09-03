@@ -22,6 +22,15 @@ does NOT try to guarantee a complete UTR -- it returns whatever's present,
 truncated or not. A truncated UTR simply won't win an exact match in
 tier 1; that's tier 2 (amount + date window)'s job to catch instead, which
 is the realistic behavior, not a bug to work around here.
+
+`Transaction.amount` is signed: `Deposit - Withdrawal`. An earlier version
+of this parser only read `Deposit` and skipped every `Withdrawal` row
+outright -- meaning refund/cashback payouts (money leaving the account)
+were invisible to the engine entirely, a real gap found when asked
+directly whether refunds were handled. Reading both and signing the
+result is also what makes a refund correctly net against its original
+payment in `amounts_reconcile`'s batch-total check, without needing
+separate refund-matching logic.
 """
 
 import csv
@@ -32,7 +41,7 @@ from pathlib import Path
 
 from app.models import Transaction
 
-REQUIRED_COLUMNS = {"Date", "Narration", "Deposit"}
+REQUIRED_COLUMNS = {"Date", "Narration", "Deposit", "Withdrawal"}
 
 # Razorpay settlement UTRs are alphanumeric, prefixed "RZRP" -- extract
 # whatever run of alphanumeric characters follows, truncated or not.
@@ -59,18 +68,17 @@ def parse_bank_statement(path: str | Path) -> list[Transaction]:
             )
 
         for row in reader:
-            deposit = (row.get("Deposit") or "").strip()
-            if not deposit or Decimal(deposit) == 0:
-                # Only credits matter for reconciling settlement payouts --
-                # withdrawals are a different reconciliation problem entirely.
-                continue
+            deposit = Decimal((row.get("Deposit") or "0").strip() or "0")
+            withdrawal = Decimal((row.get("Withdrawal") or "0").strip() or "0")
+            if deposit == 0 and withdrawal == 0:
+                continue  # nothing moved -- not a real transaction row
 
             narration = row.get("Narration") or ""
             transactions.append(
                 Transaction(
                     source="bank_statement",
                     source_row_id=row.get("Reference") or f"{row['Date']}:{narration[:30]}",
-                    amount=Decimal(deposit),
+                    amount=deposit - withdrawal,
                     date=datetime.strptime(row["Date"].strip(), "%Y-%m-%d").date(),
                     settlement_utr=extract_settlement_utr(narration),
                     description=narration,
