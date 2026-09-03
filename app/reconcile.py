@@ -20,7 +20,7 @@ from dataclasses import dataclass
 
 from app.matching.exact import amounts_reconcile, match_by_key
 from app.matching.fuzzy import match_by_amount_and_date
-from app.models import ExceptionRecord, MatchResult, Transaction
+from app.models import ExceptionCode, ExceptionRecord, MatchResult, Transaction
 
 
 @dataclass
@@ -38,12 +38,16 @@ def _reconcile_leg(
     right: list[Transaction],
     key: str,
     validate=None,
-) -> tuple[list[MatchResult], list[Transaction], list[Transaction]]:
-    """One leg: exact match by `key`, then fuzzy match whatever's left.
-    Returns (matches, still-unmatched-left, still-unmatched-right).
+) -> tuple[list[MatchResult], list[Transaction], list[Transaction], list[list[Transaction]]]:
+    """One leg: exact match by `key`, then fuzzy match whatever had no key
+    at all. Groups that shared a key but failed `validate` don't get a
+    second chance at fuzzy matching -- a failed key-based claim is a more
+    specific problem than "no candidate found", not a lesser one.
+
+    Returns (matches, still-unmatched-left, still-unmatched-right, rejected).
     """
     combined = left + right
-    exact_matches, unmatched = match_by_key(combined, key, validate=validate)
+    exact_matches, unmatched, rejected = match_by_key(combined, key, validate=validate)
 
     unmatched_left = [t for t in unmatched if t in left]
     unmatched_right = [t for t in unmatched if t in right]
@@ -52,7 +56,7 @@ def _reconcile_leg(
         unmatched_left, unmatched_right
     )
 
-    return exact_matches + fuzzy_matches, still_unmatched_left, still_unmatched_right
+    return exact_matches + fuzzy_matches, still_unmatched_left, still_unmatched_right, rejected
 
 
 def reconcile(
@@ -60,12 +64,18 @@ def reconcile(
     settlement: list[Transaction],
     bank: list[Transaction],
 ) -> ReconciliationResult:
-    ledger_settlement_matches, unmatched_ledger, unmatched_settlement_no_ledger = _reconcile_leg(
-        ledger, settlement, "order_id"
-    )
-    settlement_bank_matches, unmatched_settlement_no_bank, unmatched_bank = _reconcile_leg(
-        settlement, bank, "settlement_utr", validate=amounts_reconcile
-    )
+    (
+        ledger_settlement_matches,
+        unmatched_ledger,
+        unmatched_settlement_no_ledger,
+        rejected_ledger_settlement,
+    ) = _reconcile_leg(ledger, settlement, "order_id")
+    (
+        settlement_bank_matches,
+        unmatched_settlement_no_bank,
+        unmatched_bank,
+        rejected_settlement_bank,
+    ) = _reconcile_leg(settlement, bank, "settlement_utr", validate=amounts_reconcile)
 
     all_matches = ledger_settlement_matches + settlement_bank_matches
 
@@ -83,7 +93,11 @@ def reconcile(
 
     exceptions: list[ExceptionRecord] = []
     exceptions += [
-        ExceptionRecord([t], "No matching settlement transaction found for this order.")
+        ExceptionRecord(
+            [t],
+            "NO_COUNTERPART_FOUND",
+            "No matching settlement transaction found for this order.",
+        )
         for t in unmatched_ledger
     ]
     for row_id, t in settlement_by_id.items():
@@ -91,15 +105,36 @@ def reconcile(
         if row_id in missing_ledger_ids:
             missing_sides.append("order ledger (no order_id match)")
         if row_id in missing_bank_ids:
-            missing_sides.append("bank statement (no settlement_utr match, or amount mismatch)")
+            missing_sides.append("bank statement (no settlement_utr match)")
         exceptions.append(
-            ExceptionRecord([t], f"No counterpart found in: {', '.join(missing_sides)}.")
+            ExceptionRecord(
+                [t],
+                "NO_COUNTERPART_FOUND",
+                f"No counterpart found in: {', '.join(missing_sides)}.",
+            )
         )
     exceptions += [
         ExceptionRecord(
-            [t], "No matching settlement transaction found for this bank credit."
+            [t],
+            "NO_COUNTERPART_FOUND",
+            "No matching settlement transaction found for this bank credit.",
         )
         for t in unmatched_bank
     ]
+
+    # Rejected groups shared a reference/UTR but the amounts didn't add up --
+    # each rejected group is its own incident (see match_by_key), so each
+    # becomes its own exception rather than being lumped with unrelated rows.
+    for group in rejected_ledger_settlement + rejected_settlement_bank:
+        exceptions.append(
+            ExceptionRecord(
+                group,
+                "AMOUNT_MISMATCH",
+                (
+                    "Rows share a reference, but the amounts don't add up -- "
+                    "possible duplicate or misapplied reference."
+                ),
+            )
+        )
 
     return ReconciliationResult(matches=all_matches, exceptions=exceptions)

@@ -11,8 +11,10 @@ A shared key alone is not sufficient proof of a real match, though: two
 unrelated rows can end up sharing a reference by data-entry error (a
 duplicate/misapplied UTR). An optional `validate` callback lets a caller
 reject a same-key group whose amounts don't actually add up -- rejected
-groups fall through to `unmatched` rather than being trusted blindly, the
-same "don't force a match" principle as everywhere else in this pipeline.
+groups are returned separately from `unmatched` (see `rejected` below),
+since "found a candidate but the amounts don't reconcile" is a materially
+different, more specific diagnosis than "no candidate at all," and the
+exception it produces should say so.
 """
 
 from collections import defaultdict
@@ -26,7 +28,14 @@ def match_by_key(
     transactions: list[Transaction],
     key: str,
     validate: Callable[[list[Transaction]], bool] | None = None,
-) -> tuple[list[MatchResult], list[Transaction]]:
+) -> tuple[list[MatchResult], list[Transaction], list[list[Transaction]]]:
+    """Returns (matches, unmatched, rejected). `unmatched` had no key or no
+    cross-source group at all -- a flat list, since these have no group
+    identity worth preserving. `rejected` had a real cross-source group
+    that `validate` refused -- a list of *groups*, not a flattened list,
+    so two separate rejected incidents (e.g. two different misapplied
+    UTRs) never get merged into one exception covering unrelated rows.
+    """
     groups: dict[str, list[Transaction]] = defaultdict(list)
     unmatched: list[Transaction] = []
 
@@ -38,6 +47,7 @@ def match_by_key(
             unmatched.append(txn)
 
     matches: list[MatchResult] = []
+    rejected: list[list[Transaction]] = []
 
     for value, group in groups.items():
         sources = {t.source for t in group}
@@ -46,7 +56,7 @@ def match_by_key(
             continue
 
         if validate is not None and not validate(group):
-            unmatched.extend(group)
+            rejected.append(group)
             continue
 
         matches.append(
@@ -60,7 +70,7 @@ def match_by_key(
             )
         )
 
-    return matches, unmatched
+    return matches, unmatched, rejected
 
 
 def amounts_reconcile(

@@ -6,6 +6,25 @@ from typing import Any, Literal
 Source = Literal["order_ledger", "razorpay_settlement", "bank_statement"]
 MatchTier = Literal["exact", "fuzzy", "llm"]
 
+# Structured exception categories -- lets exceptions be counted/aggregated
+# by cause, not just read one at a time. Some of these aren't triggerable
+# yet by the current matching logic (no refund/adjustment/partial-
+# settlement handling, no tier 3 LLM) -- they're declared now so the code
+# doesn't need renaming later, not because they're all in use today.
+ExceptionCode = Literal[
+    "NO_COUNTERPART_FOUND",
+    "AMOUNT_MISMATCH",
+    "DATE_WINDOW_EXCEEDED",
+    "DUPLICATE_REFERENCE",
+    "DUPLICATE_CANDIDATE",
+    "UNEXPECTED_FEE_OR_TAX",
+    "REFUND_OR_CHARGEBACK_CONFLICT",
+    "PARTIAL_SETTLEMENT",
+    "SPLIT_OR_MERGED_SETTLEMENT",
+    "LOW_CONFIDENCE_LLM",
+    "CONTRADICTORY_DATA",
+]
+
 
 @dataclass(frozen=True)
 class Transaction:
@@ -51,9 +70,14 @@ class ExceptionRecord:
     """Something that did not confidently match at any tier. Never a
     forced/guessed match -- always carries an explicit reason so a human
     knows exactly what to go look at.
+
+    `code` is the structured category (for counting/aggregating exceptions
+    by cause -- "how many AMOUNT_MISMATCH vs NO_COUNTERPART_FOUND this
+    month"); `reason` is the human-readable detail for that specific case.
     """
 
     transactions: list[Transaction]
+    code: ExceptionCode
     reason: str
 
     @property

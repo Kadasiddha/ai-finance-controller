@@ -23,27 +23,30 @@ class TestExactMatch:
         settlement = _txn(
             "razorpay_settlement", "S1", "1953.00", date(2026, 1, 3), order_id="order_4471"
         )
-        matches, unmatched = match_by_key([ledger, settlement], "order_id")
+        matches, unmatched, rejected = match_by_key([ledger, settlement], "order_id")
 
         assert len(matches) == 1
         assert matches[0].tier == "exact"
         assert set(matches[0].transactions) == {ledger, settlement}
         assert unmatched == []
+        assert rejected == []
 
     def test_same_source_sharing_key_is_not_a_match(self):
         a = _txn("razorpay_settlement", "S1", "100.00", date(2026, 1, 1), order_id="order_1")
         b = _txn("razorpay_settlement", "S2", "50.00", date(2026, 1, 1), order_id="order_1")
-        matches, unmatched = match_by_key([a, b], "order_id")
+        matches, unmatched, rejected = match_by_key([a, b], "order_id")
 
         assert matches == []
         assert set(unmatched) == {a, b}
+        assert rejected == []
 
     def test_null_key_goes_to_unmatched(self):
         txn = _txn("order_ledger", "L1", "100.00", date(2026, 1, 1), order_id=None)
-        matches, unmatched = match_by_key([txn], "order_id")
+        matches, unmatched, rejected = match_by_key([txn], "order_id")
 
         assert matches == []
         assert unmatched == [txn]
+        assert rejected == []
 
     def test_settlement_utr_groups_many_settlement_rows_to_one_bank_row(self):
         # This is the batching case: many settlement transactions, one bank credit.
@@ -51,11 +54,12 @@ class TestExactMatch:
         s2 = _txn("razorpay_settlement", "S2", "980.00", date(2026, 1, 3), utr="UTR8823")
         bank = _txn("bank_statement", "B1", "2933.00", date(2026, 1, 3), utr="UTR8823")
 
-        matches, unmatched = match_by_key([s1, s2, bank], "settlement_utr")
+        matches, unmatched, rejected = match_by_key([s1, s2, bank], "settlement_utr")
 
         assert len(matches) == 1
         assert len(matches[0].transactions) == 3
         assert unmatched == []
+        assert rejected == []
 
 
 class TestFuzzyMatch:

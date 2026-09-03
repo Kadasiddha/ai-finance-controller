@@ -189,6 +189,7 @@ class TestNegativeScenarios:
             for t in e.transactions
             if t.order_id == "#4475"
         )
+        assert exception.code == "NO_COUNTERPART_FOUND"
         assert "no matching settlement" in exception.reason.lower()
 
     def test_wildly_mismatched_amount_is_refused_not_force_matched(self, reconciliation_result):
@@ -209,7 +210,15 @@ class TestNegativeScenarios:
             for t in e.transactions
             if t.source_row_id == "pay_6"
         )
-        assert "bank statement" in settlement_exception.reason.lower()
+        # Structured code, not just free text -- and both the settlement
+        # row AND the wrong-amount bank row are attached to the SAME
+        # exception, since they're the same incident.
+        assert settlement_exception.code == "AMOUNT_MISMATCH"
+        assert len(settlement_exception.transactions) == 2
+        assert {t.source for t in settlement_exception.transactions} == {
+            "razorpay_settlement",
+            "bank_statement",
+        }
 
     def test_exceptions_are_sorted_by_rupee_value_descending(self, reconciliation_result):
         values = [e.total_amount for e in reconciliation_result.exceptions_by_value]

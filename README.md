@@ -24,9 +24,9 @@ that loop.
    settlement) where real reasoning is needed, not pattern matching.
 
 Anything that doesn't confidently match at any tier is **never force-matched
-or guessed at** — it goes on an exception list with an explicit reason
-("no counterpart found," "amount off by more than fee tolerance," "duplicate
-reference"), sorted by rupee value. The system must be able to answer both
+or guessed at** — it goes on an exception list with a structured code
+(`NO_COUNTERPART_FOUND`, `AMOUNT_MISMATCH`, ...) plus a human-readable
+reason, sorted by rupee value. The system must be able to answer both
 *"why did you match these two transactions?"* and *"why did you refuse to
 match these two?"* — explainability on both the accept and reject path is
 the core design principle, not an afterthought.
@@ -45,7 +45,7 @@ workflow, AI governance/evaluation tooling.
 
 ## Status
 
-**Working end-to-end (38 passing tests, verified from a clean venv):**
+**Working end-to-end (39 passing tests, verified from a clean venv):**
 upload/read an order ledger, a Razorpay settlement report, and a bank
 statement → get back confirmed matches and an honest, reason-tagged
 exception list. `app/reconcile.py` is the entry point.
@@ -68,15 +68,19 @@ exception list. `app/reconcile.py` is the entry point.
 - **`app/matching/exact.py`** — tier 1, plus `amounts_reconcile`: a shared
   reference alone isn't proof of a real match (a duplicate/misapplied UTR
   can share a key by error) — a matched group's amounts must actually add
-  up, or it's refused rather than trusted.
+  up, or it's refused rather than trusted. Rejected groups are returned as
+  separate incidents (not flattened into one list), so two unrelated
+  misapplied references never get merged into a single confusing exception.
 - **`app/matching/fuzzy.py`** — tier 2, amount tolerance + T+2 date window.
 - **`app/reconcile.py`** — orchestrates both legs (ledger↔settlement via
   `order_id`, settlement↔bank via `settlement_utr`) and produces the
-  confirmed-matches + exception-list output. Proven against a fixture
-  dataset covering clean matches, batched settlements, a truncated-UTR
-  fuzzy-fallback case, a genuinely missing counterpart, and a
-  misapplied-reference amount mismatch — both what should match and what
-  should correctly refuse to.
+  confirmed-matches + exception-list output, with each exception carrying a
+  structured `code` (`NO_COUNTERPART_FOUND`, `AMOUNT_MISMATCH`, ...) so
+  exceptions can be counted/aggregated by cause, not just read one at a
+  time. Proven against a fixture dataset covering clean matches, batched
+  settlements, a truncated-UTR fuzzy-fallback case, a genuinely missing
+  counterpart, and a misapplied-reference amount mismatch — both what
+  should match and what should correctly refuse to.
 - **`app/matching/adjudicate.py`** (tier 3, LLM adjudication) —
   deliberately unimplemented. Needs real leftover-after-tiers-1-2 examples
   to design the prompt against, not a guess at what "genuinely ambiguous"
