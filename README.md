@@ -40,6 +40,8 @@ the core design principle, not an afterthought.
   Razorpay settlement report, bank statement).
 - The three-pass matching pipeline above.
 - A confirmed-matches output and an honest, reason-tagged exception list.
+- Date-range filtering (reconcile just a chosen window, not everything
+  ever uploaded) and a downloadable CSV report of the result.
 
 Explicitly **out of scope for the MVP** (may come later, not blocking this
 version): fee/GST verification, duplicate detection, cash-flow anomaly
@@ -48,7 +50,7 @@ workflow, AI governance/evaluation tooling.
 
 ## Status
 
-**Working end-to-end (49 passing tests, verified from a clean venv):**
+**Working end-to-end (67 passing tests, verified from a clean venv):**
 upload/read any 2 or all 3 sources → get back confirmed matches and an
 honest, reason-tagged exception list. `app/reconcile.py` is the entry
 point — `reconcile({"order_ledger": [...], "razorpay_settlement": [...]})`
@@ -119,6 +121,15 @@ two) raises rather than silently doing nothing.
   match), and against a deliberately-wrong synthetic result to prove the
   evaluator actually catches a false match rather than just reporting
   zeros because the current engine happens to behave.
+- **`app/filters.py`** — `filter_by_date_range(sources, start, end)`, run
+  before `reconcile()`, not folded into it: reconciling "just this month"
+  is filtering the input, not a new mode of the matching pipeline itself.
+  Both bounds inclusive; either may be omitted for an open-ended range.
+- **`app/report.py`** — `write_csv_report(result, path)`, the actual
+  downloadable artifact. One CSV (not a matches/exceptions file pair) with
+  a `record_type` column so it's filterable/sortable in Excel; matches
+  first, then exceptions sorted highest-value-first, since the costliest
+  discrepancy is what a controller should see first, not the last row.
 
 **Refunds and cashbacks (money flowing back out)** are handled — asked
 about directly, and a real gap when first checked. Every amount in the
