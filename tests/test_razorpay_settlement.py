@@ -35,7 +35,17 @@ def test_parses_all_rows(settlement_csv: Path):
 def test_converts_paise_to_rupees(settlement_csv: Path):
     transactions = parse_settlement_report(settlement_csv)
     payment = next(t for t in transactions if t.source_row_id == "pay_ABC123")
-    assert payment.amount == Decimal("2000.00")
+    # Gross ₹2000.00, fee ₹40.00, tax ₹7.20 -- amount is the NET (what
+    # actually lands in the bank), not the gross transaction amount.
+    assert payment.amount == Decimal("1952.80")
+
+
+def test_gross_amount_preserved_in_raw(settlement_csv: Path):
+    transactions = parse_settlement_report(settlement_csv)
+    payment = next(t for t in transactions if t.source_row_id == "pay_ABC123")
+    assert payment.raw["amount"] == "200000"  # gross, in paise, untouched
+    assert payment.raw["fee"] == "4000"
+    assert payment.raw["tax"] == "720"
 
 
 def test_links_order_id_and_settlement_utr(settlement_csv: Path):

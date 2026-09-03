@@ -5,10 +5,18 @@ Settlement Recon API response (razorpay.com/docs/api/settlements/fetch-recon/),
 which is also what the dashboard's downloadable combined settlement CSV
 export uses. Column names below match that documented schema exactly.
 
-Two things about Razorpay's convention that are easy to get wrong:
+Three things about Razorpay's convention that are easy to get wrong:
 - Amounts (`amount`, `fee`, `tax`, `debit`, `credit`) are in currency
   subunits (paise for INR), not rupees -- must divide by 100.
 - `created_at`/`settled_at` are Unix timestamps, not date strings.
+- `amount` is the GROSS transaction amount, before Razorpay's fee and tax
+  are deducted -- it is NOT what actually lands in the bank. This
+  project's own premise is that a ₹2,000 sale arrives as ₹1,953 once fee
+  and tax come off the top, so `Transaction.amount` here is deliberately
+  the NET amount (`amount - fee - tax`) -- what actually moves -- with
+  the original gross amount, fee, and tax preserved in `raw` for
+  reference. Getting this wrong would silently break every match against
+  the bank statement, which only ever sees net amounts.
 
 This is the file that links the other two sources together:
 - `order_id` ties a settlement row back to the order ledger.
@@ -65,11 +73,16 @@ def parse_settlement_report(path: str | Path) -> list[Transaction]:
             )
 
         for row in reader:
+            gross = _paise_to_rupees(row["amount"])
+            fee = _paise_to_rupees(row["fee"])
+            tax = _paise_to_rupees(row["tax"])
+            net = gross - fee - tax
+
             transactions.append(
                 Transaction(
                     source="razorpay_settlement",
                     source_row_id=row["entity_id"],
-                    amount=_paise_to_rupees(row["amount"]),
+                    amount=net,
                     date=_parse_timestamp(row["created_at"]).date(),
                     order_id=row.get("order_id") or None,
                     settlement_utr=row.get("settlement_utr") or None,

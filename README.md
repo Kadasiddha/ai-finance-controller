@@ -45,20 +45,38 @@ workflow, AI governance/evaluation tooling.
 
 ## Status
 
-- **`app/parsers/razorpay_settlement.py`** — real, working. Parses
-  Razorpay's documented settlement reconciliation report format (see the
-  module docstring for the source), including the paise→rupee conversion
-  and Unix-timestamp handling that format actually requires.
-- **`app/matching/exact.py`** and **`app/matching/fuzzy.py`** — real,
-  working, tested (12 passing tests). Operate purely on the normalized
-  `Transaction` model, so they don't depend on the order-ledger/bank-
-  statement formats being known yet.
-- **`app/parsers/order_ledger.py`**, **`app/parsers/bank_statement.py`** —
-  deliberately unimplemented (`NotImplementedError`) rather than guessed.
-  There's no public standard for either format the way there is for
-  Razorpay's API; writing a plausible-looking parser against an invented
-  schema would defeat this project's whole premise before it starts. Needs
-  real export samples.
+**Working end-to-end (38 passing tests, verified from a clean venv):**
+upload/read an order ledger, a Razorpay settlement report, and a bank
+statement → get back confirmed matches and an honest, reason-tagged
+exception list. `app/reconcile.py` is the entry point.
+
+- **`app/parsers/razorpay_settlement.py`** — real. Built against Razorpay's
+  documented Settlement Recon API schema, including paise→rupee conversion,
+  Unix-timestamp handling, and computing the *net* settled amount
+  (`amount - fee - tax`) rather than the gross transaction amount — the
+  net is what actually reaches the bank, which is the whole point.
+- **`app/parsers/order_ledger.py`** — built against Shopify's real,
+  documented order-export CSV schema (still a stand-in for whatever the
+  user's own system exports, but grounded in a real reference rather than
+  invented).
+- **`app/parsers/bank_statement.py`** — built against the common real shape
+  of Indian bank CSV exports, with a settlement-UTR extractor that handles
+  the realistic case: banks truncate narrations, dropping the trailing
+  digits that make a UTR unique. A truncated UTR falls through to fuzzy
+  matching instead of winning an exact match — that's the intended
+  behavior, not a bug.
+- **`app/matching/exact.py`** — tier 1, plus `amounts_reconcile`: a shared
+  reference alone isn't proof of a real match (a duplicate/misapplied UTR
+  can share a key by error) — a matched group's amounts must actually add
+  up, or it's refused rather than trusted.
+- **`app/matching/fuzzy.py`** — tier 2, amount tolerance + T+2 date window.
+- **`app/reconcile.py`** — orchestrates both legs (ledger↔settlement via
+  `order_id`, settlement↔bank via `settlement_utr`) and produces the
+  confirmed-matches + exception-list output. Proven against a fixture
+  dataset covering clean matches, batched settlements, a truncated-UTR
+  fuzzy-fallback case, a genuinely missing counterpart, and a
+  misapplied-reference amount mismatch — both what should match and what
+  should correctly refuse to.
 - **`app/matching/adjudicate.py`** (tier 3, LLM adjudication) —
   deliberately unimplemented. Needs real leftover-after-tiers-1-2 examples
   to design the prompt against, not a guess at what "genuinely ambiguous"
