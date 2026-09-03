@@ -42,6 +42,9 @@ the core design principle, not an afterthought.
 - A confirmed-matches output and an honest, reason-tagged exception list.
 - Date-range filtering (reconcile just a chosen window, not everything
   ever uploaded) and a downloadable CSV report of the result.
+- On-demand deeper analytics (match rate, per-source/per-code value
+  breakdowns, mean/median exception size) for when a controller wants
+  more than the raw match/exception list.
 
 Explicitly **out of scope for the MVP** (may come later, not blocking this
 version): fee/GST verification, duplicate detection, cash-flow anomaly
@@ -50,7 +53,7 @@ workflow, AI governance/evaluation tooling.
 
 ## Status
 
-**Working end-to-end (67 passing tests, verified from a clean venv):**
+**Working end-to-end (78 passing tests, verified from a clean venv):**
 upload/read any 2 or all 3 sources → get back confirmed matches and an
 honest, reason-tagged exception list. `app/reconcile.py` is the entry
 point — `reconcile({"order_ledger": [...], "razorpay_settlement": [...]})`
@@ -130,6 +133,18 @@ two) raises rather than silently doing nothing.
   a `record_type` column so it's filterable/sortable in Excel; matches
   first, then exceptions sorted highest-value-first, since the costliest
   discrepancy is what a controller should see first, not the last row.
+- **`app/analytics.py`** — `summarize(result)`, on-demand descriptive
+  stats: match rate, match counts by tier, exception counts/values by
+  code, mean/median exception size. Pure Python + `Decimal`
+  (`statistics.mean`/`median` handle `Decimal` natively) — deliberately
+  not numpy, which would mean converting exact amounts to `float64` and
+  reintroducing the rounding error this project exists to avoid, for a
+  performance benefit that doesn't matter at these batch sizes anyway.
+  Matched/exception value is reported **per source**, not summed across
+  sources: a matched group spans sources whose amounts represent the same
+  money at different points (a settlement row's net vs. the bank credit
+  paying it out) — summing them would double-count the same rupees rather
+  than describe a real total.
 
 **Refunds and cashbacks (money flowing back out)** are handled — asked
 about directly, and a real gap when first checked. Every amount in the
