@@ -1,0 +1,6 @@
+# ==========================================================
+# Direct dependencies -- pinned once real requirements are
+# confirmed against actual data (pandas for normalization,
+# an LLM client for pass-3 adjudication). Left unpinned until
+# then to avoid guessing at versions before they're needed.
+# ==========================================================

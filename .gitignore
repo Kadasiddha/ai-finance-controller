@@ -1,0 +1,23 @@
+# Virtual environment
+.venv/
+venv*/
+testenv*/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Environment variables
+.env
+
+# Real financial data -- never commit actual order/settlement/bank exports
+sample_data/*
+!sample_data/.gitkeep
