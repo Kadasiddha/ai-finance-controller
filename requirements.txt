@@ -1,6 +1,15 @@
 # ==========================================================
-# Direct dependencies -- pinned once real requirements are
-# confirmed against actual data (pandas for normalization,
-# an LLM client for pass-3 adjudication). Left unpinned until
-# then to avoid guessing at versions before they're needed.
+# Direct dependencies
+# ==========================================================
+
+pytest==9.1.1
+
+# ==========================================================
+# Not yet added, deliberately:
+# - An LLM client (Ollama or hosted) for tier-3 adjudication --
+#   waiting on real ambiguous-case examples before choosing/pinning one
+#   (see app/matching/adjudicate.py).
+# - Anything for the order-ledger/bank-statement parsers -- waiting on
+#   real export samples before knowing what's actually needed to read them
+#   (see app/parsers/order_ledger.py and app/parsers/bank_statement.py).
 # ==========================================================

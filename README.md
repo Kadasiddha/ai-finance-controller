@@ -45,7 +45,23 @@ workflow, AI governance/evaluation tooling.
 
 ## Status
 
-Scaffolding only — not yet built against real data. Needs real Razorpay
-export samples (order ledger + settlement report format) before the parsers
-and matching logic can be written for real; no synthetic/mock data will be
-used for this project.
+- **`app/parsers/razorpay_settlement.py`** — real, working. Parses
+  Razorpay's documented settlement reconciliation report format (see the
+  module docstring for the source), including the paise→rupee conversion
+  and Unix-timestamp handling that format actually requires.
+- **`app/matching/exact.py`** and **`app/matching/fuzzy.py`** — real,
+  working, tested (12 passing tests). Operate purely on the normalized
+  `Transaction` model, so they don't depend on the order-ledger/bank-
+  statement formats being known yet.
+- **`app/parsers/order_ledger.py`**, **`app/parsers/bank_statement.py`** —
+  deliberately unimplemented (`NotImplementedError`) rather than guessed.
+  There's no public standard for either format the way there is for
+  Razorpay's API; writing a plausible-looking parser against an invented
+  schema would defeat this project's whole premise before it starts. Needs
+  real export samples.
+- **`app/matching/adjudicate.py`** (tier 3, LLM adjudication) —
+  deliberately unimplemented. Needs real leftover-after-tiers-1-2 examples
+  to design the prompt against, not a guess at what "genuinely ambiguous"
+  looks like here.
+
+Run tests: `pip install -r requirements.txt && pytest tests/ -v`
