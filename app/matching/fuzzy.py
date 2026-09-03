@@ -13,6 +13,10 @@ from decimal import Decimal
 from app.models import MatchResult, Transaction
 
 # Razorpay's standard settlement cycle is T+2 -- payment on day T, payout by day T+2.
+# These defaults are still tuned to that specific cycle -- they haven't been
+# validated against other gateways' real payout cadences (Stripe's, for one,
+# varies by country) even though this matcher now runs against more than
+# just Razorpay transactions.
 DEFAULT_MAX_DATE_DELTA = timedelta(days=2)
 DEFAULT_AMOUNT_TOLERANCE = Decimal("5.00")
 
@@ -55,8 +59,8 @@ def match_by_amount_and_date(
                     tier="fuzzy",
                     transactions=[l_txn, best_match],
                     reasoning=(
-                        f"Amount within tolerance (diff=₹{best_diff}, "
-                        f"limit=₹{amount_tolerance}) and date within "
+                        f"Amount within tolerance (diff={best_diff}, "
+                        f"limit={amount_tolerance}) and date within "
                         f"{max_date_delta.days} day(s) "
                         f"({l_txn.date} vs {best_match.date})."
                     ),

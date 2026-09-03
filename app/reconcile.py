@@ -47,6 +47,8 @@ class Leg(NamedTuple):
 KNOWN_LEGS: list[Leg] = [
     Leg("order_ledger", "razorpay_settlement", "order_id"),
     Leg("razorpay_settlement", "bank_statement", "settlement_utr", amounts_reconcile),
+    Leg("order_ledger", "stripe_settlement", "order_id"),
+    Leg("stripe_settlement", "bank_statement", "settlement_utr", amounts_reconcile),
 ]
 
 

@@ -1,11 +1,11 @@
 # AI Finance Controller
 
 A tiered reconciliation engine that matches the same money across records
-that never line up directly: an order ledger, a Razorpay settlement report,
-and a bank statement. Reconciles any 2 or all 3 of these — select just the
-ledger and settlement report, just the settlement report and bank
-statement, or all three; the engine only runs the comparisons that make
-sense for whatever you select.
+that never line up directly: an order ledger, a payment gateway's settlement
+report (Razorpay or Stripe), and a bank statement. Reconciles any 2 or all 3
+of these — select just the ledger and settlement report, just the settlement
+report and bank statement, or all three; the engine only runs the
+comparisons that make sense for whatever you select.
 
 ## The problem
 
@@ -53,7 +53,7 @@ workflow, AI governance/evaluation tooling.
 
 ## Status
 
-**Working end-to-end (78 passing tests, verified from a clean venv):**
+**Working end-to-end (89 passing tests, verified from a clean venv):**
 upload/read any 2 or all 3 sources → get back confirmed matches and an
 honest, reason-tagged exception list. `app/reconcile.py` is the entry
 point — `reconcile({"order_ledger": [...], "razorpay_settlement": [...]})`
@@ -70,6 +70,24 @@ two) raises rather than silently doing nothing.
   payment it reverses, with direction only ever signaled by `debit`/`credit`.
   Reading the gross column directly, as an earlier version did, silently
   treated every refund as more incoming money instead of money leaving.
+- **`app/parsers/stripe_settlement.py`** — real, built against Stripe's
+  documented Itemized Payout Reconciliation report
+  (`payout_reconciliation.itemized.7`), the second gateway added to prove
+  the reconciliation engine actually generalizes rather than being
+  Razorpay-shaped by accident. Two genuine structural differences from
+  Razorpay, both discovered from Stripe's own docs, not assumed: Stripe's
+  `net` is already signed (a refund row is already negative, no
+  `debit`/`credit` reconstruction needed) and already expressed in major
+  currency units (no paise-style `/100`). A third difference changes
+  behavior, not just parsing: Stripe's `trace_id` (the closest analog to
+  Razorpay's settlement UTR) is bank-determined in format, often
+  unavailable, and isn't documented to appear in a bank statement
+  narration the way Razorpay's UTR reliably does — so a Stripe settlement
+  row realistically reaches the bank statement via tier 2 (fuzzy
+  amount+date), not tier 1 exact match. `bank_statement.py`'s narration
+  extractor was deliberately left untouched (still Razorpay-UTR-specific)
+  rather than inventing a fake recognizable Stripe narration pattern with
+  no real evidence behind it.
 - **`app/parsers/order_ledger.py`** — built against Shopify's real,
   documented order-export CSV schema (still a stand-in for whatever the
   user's own system exports, but grounded in a real reference rather than
@@ -107,7 +125,12 @@ two) raises rather than silently doing nothing.
   clean matches, batched settlements, a truncated-UTR fuzzy-fallback case,
   a genuinely missing counterpart, and a misapplied-reference amount
   mismatch — both what should match and what should correctly refuse to,
-  at both the full 3-way and narrower 2-way selections.
+  at both the full 3-way and narrower 2-way selections. Adding Stripe as a
+  second gateway proved the design: it took a new parser and two `Leg`
+  declarations (`order_ledger`↔`stripe_settlement`,
+  `stripe_settlement`↔`bank_statement`) — zero changes to `_run_leg`,
+  `reconcile()`, or either matching tier, both already fully generic over
+  source names.
 - **`app/matching/adjudicate.py`** (tier 3, LLM adjudication) —
   deliberately unimplemented. Needs real leftover-after-tiers-1-2 examples
   to design the prompt against, not a guess at what "genuinely ambiguous"
@@ -157,5 +180,33 @@ same `settlement_utr` batch. `REFUND_OR_CHARGEBACK_CONFLICT` remains
 reserved for a refund that genuinely can't be netted this way (no shared
 batch, no counterpart) — still not wired to real logic, since that needs
 a real ambiguous example to design against, same as tier 3.
+
+**Known gaps surfaced by adding a second gateway** (found, not hidden —
+the whole point of testing the abstraction against something genuinely
+different from Razorpay):
+1. `Transaction.settlement_utr` and `bank_statement.py`'s
+   `extract_settlement_utr` keep their Razorpay-flavored names even
+   though the field now holds Stripe's `trace_id` too — a real, separate
+   cleanup (rename to something gateway-neutral) deliberately not bundled
+   into this pass, since it touches nearly every file in the repo for no
+   functional gain on its own.
+2. `app/matching/fuzzy.py`'s default date window/amount tolerance are
+   still tuned to Razorpay's documented T+2 settlement cycle, not
+   validated against Stripe's (which varies by country).
+3. `Transaction` has no `currency` field — nothing would stop an
+   accidental cross-currency match if two differently-denominated sources
+   were reconciled together. Not exercised by any current test, which
+   each stay single-currency.
+4. **Multi-row settlement batches can't be reconstructed for a gateway
+   without a bank-echoed reference**: fuzzy matching (tier 2) is strictly
+   one-to-one, so if a gateway batches multiple rows (e.g. a charge and a
+   refund) into one payout and there's no shared exact-match key
+   surviving to the bank side, the batch can't be netted into one match —
+   each row correctly becomes its own `NO_COUNTERPART_FOUND` exception
+   instead (proven in `tests/test_reconcile_stripe.py`), which is honest
+   but not the single netted answer a human would recognize. Fixing this
+   would need either a real bank-side batch signal for Stripe or a
+   many-to-one fuzzy tier, and either needs a real ambiguous example to
+   design against.
 
 Run tests: `pip install -r requirements.txt && pytest tests/ -v`
