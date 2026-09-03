@@ -48,7 +48,7 @@ workflow, AI governance/evaluation tooling.
 
 ## Status
 
-**Working end-to-end (43 passing tests, verified from a clean venv):**
+**Working end-to-end (46 passing tests, verified from a clean venv):**
 upload/read any 2 or all 3 sources → get back confirmed matches and an
 honest, reason-tagged exception list. `app/reconcile.py` is the entry
 point — `reconcile({"order_ledger": [...], "razorpay_settlement": [...]})`
@@ -101,5 +101,26 @@ two) raises rather than silently doing nothing.
   deliberately unimplemented. Needs real leftover-after-tiers-1-2 examples
   to design the prompt against, not a guess at what "genuinely ambiguous"
   looks like here.
+- **`app/evaluation.py`** — the actual point of this project, not an
+  afterthought: "I matched 98%" is meaningless without knowing whether
+  that 98% is *correct*. Takes a `ReconciliationResult` plus a
+  `GroundTruthEntry` list (known-correct expected outcomes for a golden
+  dataset) and computes auto-match precision, recall, false-match rate,
+  exception coverage, and total unresolved rupee value — the metrics
+  named in the project's own Evaluation Framework spec. Verified two ways:
+  against the real fixture (precision/recall/false-match-rate all come out
+  perfect, since the tiered design's whole point is never forcing a wrong
+  match), and against a deliberately-wrong synthetic result to prove the
+  evaluator actually catches a false match rather than just reporting
+  zeros because the current engine happens to behave.
+
+**Known, explicitly out-of-scope gaps** (asked about directly, worth
+stating plainly rather than leaving implicit): refunds/cashbacks/money
+flowing back out are not handled yet — the bank-statement parser only
+reads the `Deposit` column, skipping `Withdrawal` entirely, and nothing
+nets a refund against its original payment even though Razorpay's own
+settlement schema carries a `payment_id` on refund rows for exactly that
+purpose. This is the `REFUND_OR_CHARGEBACK_CONFLICT` exception code
+already declared in the model but not yet wired to real logic.
 
 Run tests: `pip install -r requirements.txt && pytest tests/ -v`
