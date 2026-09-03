@@ -1,26 +1,53 @@
 """Top-level reconciliation pipeline.
 
-Two separate legs, not one 3-way join: ledger<->settlement (linked by
-order_id) and settlement<->bank (linked by settlement_utr). A single
-settlement transaction naturally participates in both legs at once --
-that's normal, not a bug, since it's genuinely the thing that connects
-the order to the payout.
+Generalized to reconcile any 2 or more of the known sources, selected by
+the caller -- not hardcoded to always requiring all three. A "leg" is one
+pairwise relationship between two sources, linked by a specific shared key
+(e.g. `order_id` links order_ledger to razorpay_settlement). Only legs
+where BOTH sides are present in the caller's selected sources actually
+run: select just order_ledger + razorpay_settlement and only that one leg
+runs; select all three and both known legs run, chained through the
+settlement transaction that naturally participates in both.
+
+Adding a new known source later means adding its leg(s) to KNOWN_LEGS, not
+rewriting this pipeline. This deliberately does NOT attempt to support
+arbitrary unknown source types with unknown keys -- guessing at how to
+relate two unfamiliar sources would be exactly the kind of invented
+behavior this project's own principles reject. Selecting two sources with
+no known relationship between them (e.g. order_ledger + bank_statement,
+skipping settlement) raises rather than silently doing nothing.
 
 Each leg runs exact matching first (tier 1, cheap and provably correct),
-then fuzzy matching on whatever's left (tier 2, still no LLM). Tier 3 (LLM
-adjudication) is not wired in yet -- see app/matching/adjudicate.py.
+then fuzzy matching on whatever had no key at all (tier 2, still no LLM).
+Tier 3 (LLM adjudication) is not wired in yet -- see
+app/matching/adjudicate.py.
 
 Nothing that fails to confidently match at any tier is force-matched.
-Unmatched transactions become ExceptionRecords with an explicit reason,
-sorted by rupee value -- the exception list is the actual deliverable
-here, not an afterthought.
+Unmatched transactions become ExceptionRecords with a structured code and
+an explicit reason, sorted by rupee value -- the exception list is the
+actual deliverable here, not an afterthought.
 """
 
+from collections import defaultdict
 from dataclasses import dataclass
+from typing import Callable, NamedTuple
 
 from app.matching.exact import amounts_reconcile, match_by_key
 from app.matching.fuzzy import match_by_amount_and_date
-from app.models import ExceptionCode, ExceptionRecord, MatchResult, Transaction
+from app.models import ExceptionRecord, MatchResult, Source, Transaction
+
+
+class Leg(NamedTuple):
+    left: Source
+    right: Source
+    key: str
+    validate: Callable[[list[Transaction]], bool] | None = None
+
+
+KNOWN_LEGS: list[Leg] = [
+    Leg("order_ledger", "razorpay_settlement", "order_id"),
+    Leg("razorpay_settlement", "bank_statement", "settlement_utr", amounts_reconcile),
+]
 
 
 @dataclass
@@ -33,21 +60,14 @@ class ReconciliationResult:
         return sorted(self.exceptions, key=lambda e: e.total_amount, reverse=True)
 
 
-def _reconcile_leg(
+def _run_leg(
+    leg: Leg,
     left: list[Transaction],
     right: list[Transaction],
-    key: str,
-    validate=None,
 ) -> tuple[list[MatchResult], list[Transaction], list[Transaction], list[list[Transaction]]]:
-    """One leg: exact match by `key`, then fuzzy match whatever had no key
-    at all. Groups that shared a key but failed `validate` don't get a
-    second chance at fuzzy matching -- a failed key-based claim is a more
-    specific problem than "no candidate found", not a lesser one.
-
-    Returns (matches, still-unmatched-left, still-unmatched-right, rejected).
-    """
+    """Returns (matches, still-unmatched-left, still-unmatched-right, rejected)."""
     combined = left + right
-    exact_matches, unmatched, rejected = match_by_key(combined, key, validate=validate)
+    exact_matches, unmatched, rejected = match_by_key(combined, leg.key, validate=leg.validate)
 
     unmatched_left = [t for t in unmatched if t in left]
     unmatched_right = [t for t in unmatched if t in right]
@@ -59,82 +79,74 @@ def _reconcile_leg(
     return exact_matches + fuzzy_matches, still_unmatched_left, still_unmatched_right, rejected
 
 
-def reconcile(
-    ledger: list[Transaction],
-    settlement: list[Transaction],
-    bank: list[Transaction],
-) -> ReconciliationResult:
-    (
-        ledger_settlement_matches,
-        unmatched_ledger,
-        unmatched_settlement_no_ledger,
-        rejected_ledger_settlement,
-    ) = _reconcile_leg(ledger, settlement, "order_id")
-    (
-        settlement_bank_matches,
-        unmatched_settlement_no_bank,
-        unmatched_bank,
-        rejected_settlement_bank,
-    ) = _reconcile_leg(settlement, bank, "settlement_utr", validate=amounts_reconcile)
+def reconcile(sources: dict[Source, list[Transaction]]) -> ReconciliationResult:
+    """Reconcile whichever of the known sources the caller selects (2 or
+    more). `sources` maps source name -> that source's parsed transactions;
+    omit a source entirely to run a narrower reconciliation (e.g. just
+    order_ledger + razorpay_settlement, skipping the bank statement).
 
-    all_matches = ledger_settlement_matches + settlement_bank_matches
+    Raises ValueError if fewer than 2 sources are given, or if none of the
+    selected sources have a known relationship linking them.
+    """
+    if len(sources) < 2:
+        raise ValueError("Need at least 2 sources to reconcile anything.")
 
-    # A settlement row can legitimately be missing its ledger counterpart,
-    # its bank counterpart, or both -- these are different diagnoses (an
-    # order with no payment record vs. a payment that hasn't been paid out
-    # yet) and collapsing them into one generic reason would throw away
-    # exactly the detail an exception list exists to preserve.
-    missing_ledger_ids = {t.source_row_id for t in unmatched_settlement_no_ledger}
-    missing_bank_ids = {t.source_row_id for t in unmatched_settlement_no_bank}
-    settlement_by_id = {
-        t.source_row_id: t
-        for t in unmatched_settlement_no_ledger + unmatched_settlement_no_bank
-    }
-
-    exceptions: list[ExceptionRecord] = []
-    exceptions += [
-        ExceptionRecord(
-            [t],
-            "NO_COUNTERPART_FOUND",
-            "No matching settlement transaction found for this order.",
-        )
-        for t in unmatched_ledger
+    applicable_legs = [
+        leg for leg in KNOWN_LEGS if leg.left in sources and leg.right in sources
     ]
-    for row_id, t in settlement_by_id.items():
-        missing_sides = []
-        if row_id in missing_ledger_ids:
-            missing_sides.append("order ledger (no order_id match)")
-        if row_id in missing_bank_ids:
-            missing_sides.append("bank statement (no settlement_utr match)")
-        exceptions.append(
-            ExceptionRecord(
-                [t],
-                "NO_COUNTERPART_FOUND",
-                f"No counterpart found in: {', '.join(missing_sides)}.",
-            )
+    if not applicable_legs:
+        known = [(leg.left, leg.right) for leg in KNOWN_LEGS]
+        raise ValueError(
+            f"No known relationship links any pair of the selected sources "
+            f"{sorted(sources)}. Known relationships: {known}."
         )
-    exceptions += [
+
+    all_matches: list[MatchResult] = []
+    # A row unmatched in one leg it participated in is still fine if it
+    # matched in a *different* leg -- e.g. a settlement row can match its
+    # order but still be legitimately missing a bank credit (not yet
+    # settled). Track per-row which side(s) it's missing across all legs
+    # it was eligible for, not just whether it matched at least once.
+    unmatched_by_row: dict[str, Transaction] = {}
+    missing_from_by_row: dict[str, set[Source]] = defaultdict(set)
+    rejected_groups: list[list[Transaction]] = []
+
+    for leg in applicable_legs:
+        matches, left_unmatched, right_unmatched, rejected = _run_leg(
+            leg, sources[leg.left], sources[leg.right]
+        )
+        all_matches.extend(matches)
+        rejected_groups.extend(rejected)
+
+        for t in left_unmatched:
+            unmatched_by_row[t.source_row_id] = t
+            missing_from_by_row[t.source_row_id].add(leg.right)
+        for t in right_unmatched:
+            unmatched_by_row[t.source_row_id] = t
+            missing_from_by_row[t.source_row_id].add(leg.left)
+
+    exceptions: list[ExceptionRecord] = [
         ExceptionRecord(
             [t],
             "NO_COUNTERPART_FOUND",
-            "No matching settlement transaction found for this bank credit.",
+            f"No counterpart found in: {', '.join(sorted(missing_from_by_row[row_id]))}.",
         )
-        for t in unmatched_bank
+        for row_id, t in unmatched_by_row.items()
     ]
 
     # Rejected groups shared a reference/UTR but the amounts didn't add up --
     # each rejected group is its own incident (see match_by_key), so each
     # becomes its own exception rather than being lumped with unrelated rows.
-    for group in rejected_ledger_settlement + rejected_settlement_bank:
-        exceptions.append(
-            ExceptionRecord(
-                group,
-                "AMOUNT_MISMATCH",
-                (
-                    "Rows share a reference, but the amounts don't add up -- "
-                    "possible duplicate or misapplied reference."
-                ),
-            )
+    exceptions += [
+        ExceptionRecord(
+            group,
+            "AMOUNT_MISMATCH",
+            (
+                "Rows share a reference, but the amounts don't add up -- "
+                "possible duplicate or misapplied reference."
+            ),
         )
+        for group in rejected_groups
+    ]
 
     return ReconciliationResult(matches=all_matches, exceptions=exceptions)
