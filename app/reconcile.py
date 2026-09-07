@@ -19,8 +19,11 @@ skipping settlement) raises rather than silently doing nothing.
 
 Each leg runs exact matching first (tier 1, cheap and provably correct),
 then fuzzy matching on whatever had no key at all (tier 2, still no LLM).
-Tier 3 (LLM adjudication) is not wired in yet -- see
-app/matching/adjudicate.py.
+Tier 3 (LLM adjudication, app/matching/adjudicate.py) is OFF by default --
+pass `adjudicate_fn=adjudicate` to `reconcile()` to opt in. It's the only
+tier with a real runtime dependency (a locally running Ollama server)
+and real latency, so every existing caller's default behavior stays
+100% deterministic and instant unless they explicitly ask for tier 3.
 
 Nothing that fails to confidently match at any tier is force-matched.
 Unmatched transactions become ExceptionRecords with a structured code and
@@ -68,6 +71,7 @@ def _run_leg(
     leg: Leg,
     left: list[Transaction],
     right: list[Transaction],
+    adjudicate_fn: Callable | None = None,
 ) -> tuple[list[MatchResult], list[Transaction], list[Transaction], list[list[Transaction]]]:
     """Returns (matches, still-unmatched-left, still-unmatched-right, rejected)."""
     combined = left + right
@@ -80,14 +84,31 @@ def _run_leg(
         unmatched_left, unmatched_right
     )
 
-    return exact_matches + fuzzy_matches, still_unmatched_left, still_unmatched_right, rejected
+    all_matches = exact_matches + fuzzy_matches
+
+    if adjudicate_fn is not None:
+        llm_matches, still_unmatched_left, still_unmatched_right = adjudicate_fn(
+            still_unmatched_left, still_unmatched_right
+        )
+        all_matches = all_matches + llm_matches
+
+    return all_matches, still_unmatched_left, still_unmatched_right, rejected
 
 
-def reconcile(sources: dict[Source, list[Transaction]]) -> ReconciliationResult:
+def reconcile(
+    sources: dict[Source, list[Transaction]],
+    adjudicate_fn: Callable | None = None,
+) -> ReconciliationResult:
     """Reconcile whichever of the known sources the caller selects (2 or
     more). `sources` maps source name -> that source's parsed transactions;
     omit a source entirely to run a narrower reconciliation (e.g. just
     order_ledger + razorpay_settlement, skipping the bank statement).
+
+    `adjudicate_fn` opts into tier 3 (LLM adjudication) on whatever
+    survives tiers 1-2 in every leg -- omit it (the default) for the
+    fast, fully deterministic 2-tier pipeline used everywhere else in
+    this project. Pass `app.matching.adjudicate.adjudicate` to enable it
+    (requires a locally running Ollama server -- see README).
 
     Raises ValueError if fewer than 2 sources are given, or if none of the
     selected sources have a known relationship linking them.
@@ -135,7 +156,7 @@ def reconcile(sources: dict[Source, list[Transaction]]) -> ReconciliationResult:
 
     for leg in applicable_legs:
         matches, left_unmatched, right_unmatched, rejected = _run_leg(
-            leg, sources[leg.left], sources[leg.right]
+            leg, sources[leg.left], sources[leg.right], adjudicate_fn=adjudicate_fn
         )
         all_matches.extend(matches)
         rejected_groups.extend(rejected)

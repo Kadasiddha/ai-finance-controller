@@ -42,12 +42,39 @@ def _dates(transactions: list[Transaction]) -> str:
     return ";".join(str(t.date) for t in transactions)
 
 
+def _canonical_match_amount(transactions: list[Transaction]) -> Decimal:
+    """The one real amount to show for a match -- not the sum across
+    every source in the group, which double-counts the same money as it
+    appears at different points (a matched group's gross ledger total
+    and net settlement amount aren't two amounts to add together, they're
+    two different facts about the same sale; a settlement's net and the
+    bank credit that pays it out are supposed to be equal, so summing
+    them is just double the real number).
+
+    Prefers the most concrete, final fact available: the bank credit if
+    the match reaches the bank statement, otherwise the settlement's net
+    amount (post-fee, closer to what's actually real), otherwise the
+    ledger's gross total. Gateway-agnostic by construction -- any source
+    that isn't `order_ledger` or `bank_statement` is treated as "a
+    settlement source," so a new gateway needs no change here.
+    """
+    by_source: dict[str, Decimal] = {}
+    for t in transactions:
+        by_source[t.source] = by_source.get(t.source, Decimal("0")) + t.amount
+
+    if "bank_statement" in by_source:
+        return by_source["bank_statement"]
+    settlement_sources = [s for s in by_source if s != "order_ledger"]
+    if settlement_sources:
+        return by_source[settlement_sources[0]]
+    return by_source["order_ledger"]
+
+
 def _match_row(match: MatchResult) -> dict:
-    total = sum((t.amount for t in match.transactions), start=Decimal("0"))
     return {
         "record_type": "match",
         "tier_or_code": match.tier,
-        "total_amount": str(total),
+        "total_amount": str(_canonical_match_amount(match.transactions)),
         "sources_involved": _sources_involved(match.transactions),
         "transaction_ids": _transaction_ids(match.transactions),
         "dates": _dates(match.transactions),

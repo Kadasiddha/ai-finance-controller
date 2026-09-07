@@ -45,3 +45,7 @@ EOF
   batched with its original payment nets automatically via signed
   amounts, plus an unattributable refund payout that correctly surfaces
   as an exception rather than being silently matched or dropped.
+- **[test4_llm_adjudication](test4_llm_adjudication/)** -- tier 3 (LLM
+  adjudication, opt-in, local Ollama): a many-to-many case neither
+  deterministic tier can resolve. Includes a real, honest finding about
+  live-model non-determinism.

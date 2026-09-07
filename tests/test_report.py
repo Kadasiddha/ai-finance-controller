@@ -90,3 +90,37 @@ def test_no_counterpart_exception_lists_the_missing_source(report_rows):
 def test_every_total_amount_is_a_valid_decimal(report_rows):
     for row in report_rows:
         Decimal(row["total_amount"])  # raises if malformed
+
+
+def test_ledger_to_settlement_match_shows_the_settlement_net_not_a_cross_source_sum(
+    report_rows,
+):
+    # #4471's ledger total is 2000.00 (gross) and pay_1's net is 1952.80
+    # -- summing them (3952.80, the old behavior) isn't a real number a
+    # controller would recognize. The settlement's net is: no bank_statement
+    # in this group, so the settlement side is the canonical amount.
+    row = next(
+        r
+        for r in report_rows
+        if r["record_type"] == "match"
+        and "order_ledger:#4471" in r["transaction_ids"]
+        and "bank_statement" not in r["sources_involved"]
+    )
+    assert row["total_amount"] == "1952.80"
+
+
+def test_settlement_to_bank_match_shows_the_bank_amount_not_a_cross_source_sum(
+    report_rows,
+):
+    # pay_1's net (1952.80) and the matching bank credit (also 1952.80,
+    # that's the whole point of the match) summed to 3905.60 under the
+    # old behavior -- just double the real number. With bank_statement
+    # present, the bank amount is the canonical one.
+    row = next(
+        r
+        for r in report_rows
+        if r["record_type"] == "match"
+        and "razorpay_settlement:pay_1" in r["transaction_ids"]
+        and "bank_statement" in r["sources_involved"]
+    )
+    assert row["total_amount"] == "1952.80"

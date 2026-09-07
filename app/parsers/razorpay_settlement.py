@@ -52,10 +52,23 @@ REQUIRED_COLUMNS = {
 }
 
 
+_CENTS = Decimal("0.01")
+
+
 def _paise_to_rupees(value: str) -> Decimal:
     if not value:
-        return Decimal("0")
-    return Decimal(value) / Decimal(100)
+        return Decimal("0.00")
+    # Plain division by 100 doesn't guarantee 2 decimal places -- Decimal
+    # keeps only the precision the exact division actually needs, so
+    # 720/100 comes out as 7.2 (one decimal place) while 4000/100 comes
+    # out as 40 (zero). Downstream arithmetic (fee/tax subtraction) then
+    # inherits whichever operand's scale is smallest, producing a `net`
+    # amount with an inconsistent, sometimes-wrong-looking number of
+    # decimal places for what's supposed to be a fixed 2-decimal currency
+    # value. Quantizing here guarantees every rupee amount this parser
+    # produces is consistently 2 decimal places, the same way real money
+    # is always represented.
+    return (Decimal(value) / Decimal(100)).quantize(_CENTS)
 
 
 def _parse_timestamp(value: str) -> datetime:

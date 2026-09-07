@@ -1,0 +1,3 @@
+entity_id,type,debit,credit,amount,currency,fee,tax,on_hold,settled,created_at,settled_at,settlement_id,settlement_utr,order_id,payment_id,description
+pay_a,payment,0,60000,60000,INR,1000,0,False,True,1775044800,1775044800,setl_t4_a,RZRP_UTR_A8001,#8001,pay_a,
+pay_b,payment,0,42000,42000,INR,1000,0,False,True,1775044800,1775044800,setl_t4_b,RZRP_UTR_B8002,#8002,pay_b,

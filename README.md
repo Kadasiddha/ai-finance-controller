@@ -54,29 +54,46 @@ the core design principle, not an afterthought.
 
 ## LLM usage — honest current status
 
-**No LLM call happens anywhere in this pipeline today.** Everything that
-works right now — parsing, exact matching, fuzzy matching, batch
-validation, the evaluation framework, analytics, the CSV report — is
-plain, deterministic Python. This matters for a reconciliation tool
-specifically: a controller needs to trust *why* two transactions were
-matched, and rule-based logic is provable and reproducible in a way an
-LLM call isn't — that's also why tiers 1 and 2 are deliberately
-non-LLM, not a stepping stone to "eventually replace with AI."
+**Tiers 1 and 2 (exact and fuzzy matching) never call an LLM, on
+purpose.** A controller needs to trust *why* two transactions were
+matched, and deterministic, rule-based logic is provable and
+reproducible in a way an LLM call isn't — that's a permanent design
+choice, not a stepping stone to "eventually replace everything with AI."
 
-Tier 3 (`app/matching/adjudicate.py`) is the one place an LLM is intended
-to be used, and it's a stub today — `adjudicate()` raises
-`NotImplementedError` on purpose. It's reserved for the genuinely
-ambiguous leftovers that survive both exact and fuzzy matching (e.g. a
-partial refund tangled into a split settlement, or a many-to-many batch
-fuzzy matching can't resolve one-to-one) — cases where real reasoning
-over context is warranted, not pattern matching. It's deliberately not
-built yet because designing its prompt against *guessed* ambiguous cases,
-before any real leftover data exists to see what "genuinely ambiguous"
-actually looks like here, would be exactly the kind of invented behavior
-this project's own principles reject. When it is built, its contract
-stays the same shape as tiers 1–2: transactions in, `(matches,
-still_unmatched)` out, every match carrying a `reasoning` string and
-every non-match traceable to why the model declined to force one.
+**Tier 3 (`app/matching/adjudicate.py`) does use a real, local LLM**
+(Ollama, `qwen2.5:7b-instruct`, via `app/llm_client.py`) — for exactly
+the one thing tiers 1–2 structurally can't do: reasoning over
+*combinations* (e.g. two separate settlement batches that a bank
+combined into a single wire credit — neither individually matches the
+bank amount, but their sum does, and fuzzy matching is strictly
+one-to-one). It's **off by default** — `reconcile(sources)` never
+touches Ollama; a caller opts in explicitly with
+`reconcile(sources, adjudicate_fn=adjudicate)`. This keeps the default
+path 100% deterministic, instant, and free of any runtime dependency,
+and it's why the committed test suite (119 tests) never needs a real
+Ollama server — tier 3's tests inject a fake `call_llm`.
+
+**The core design principle: the LLM proposes, code verifies.** An LLM
+is unreliable at precise arithmetic, and this project's whole premise is
+exact money reconciliation — so the model never gets to unilaterally
+declare a match true. Every group it proposes is independently
+re-checked with the same `amounts_reconcile()` tier 1 already uses,
+plus a hallucination guard (rejects any transaction ID the model
+invented) and a minimum-confidence floor. A proposal that fails any of
+these is rejected, not trusted — same "never force-matched" principle
+as every other tier. Verified this actually holds by testing it against
+a real local Ollama call (not just the injected fake): the live model is
+genuinely non-deterministic on this task — it sometimes finds a correct
+combination with good reasoning, sometimes declines the same prompt
+entirely — and both outcomes are handled correctly by design (see
+`docs/sample_tests/test4_llm_adjudication/README.md` for the full
+finding). The model's *judgment* is allowed to vary; the *arithmetic*
+that decides whether a proposal is accepted never does.
+
+To actually exercise tier 3 yourself: `ollama pull qwen2.5:7b-instruct`,
+make sure Ollama is running locally, then pass `adjudicate_fn=adjudicate`
+to `reconcile()` (see `docs/sample_tests/test4_llm_adjudication/`).
+Nothing else in this project needs Ollama at all.
 
 ## MVP scope (this repo)
 
@@ -102,8 +119,15 @@ git clone https://github.com/Kadasiddha/ai-finance-controller.git
 cd ai-finance-controller
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-pytest tests/ -v          # confirm everything passes on your machine
+pytest tests/ -v          # confirm everything passes on your machine, no Ollama needed
 ```
+
+The test suite (and everything except tier 3) has no external runtime
+dependency — `pytest` and `requests` are the only packages installed
+above. Tier 3 (LLM adjudication) is the one optional exception: it needs
+a locally running Ollama server with `qwen2.5:7b-instruct` pulled
+(`ollama pull qwen2.5:7b-instruct`) — but it's off by default, so
+nothing else here requires it.
 
 There's no CLI or web app yet — this is a library today (see the Track
 2/3 backlog below for what's next). To actually run a reconciliation,
@@ -141,7 +165,7 @@ Start with `docs/sample_tests/test1_single_gateway/`.
 
 ## Status
 
-**Working end-to-end (107 passing tests, verified from a clean venv):**
+**Working end-to-end (119 passing tests, verified from a clean venv):**
 upload/read any 2 or all 3 sources → get back confirmed matches and an
 honest, reason-tagged exception list. `app/reconcile.py` is the entry
 point — `reconcile({"order_ledger": [...], "razorpay_settlement": [...]})`
@@ -255,10 +279,12 @@ two) raises rather than silently doing nothing.
   see `docs/sample_tests/test2_multi_gateway/README.md` for the full
   before/after, and `tests/test_reconcile_multi_gateway.py` for the
   regression coverage.
-- **`app/matching/adjudicate.py`** (tier 3, LLM adjudication) —
-  deliberately unimplemented. Needs real leftover-after-tiers-1-2 examples
-  to design the prompt against, not a guess at what "genuinely ambiguous"
-  looks like here.
+- **`app/matching/adjudicate.py`** (tier 3, LLM adjudication) — real,
+  opt-in (`reconcile(sources, adjudicate_fn=adjudicate)`, off by
+  default). See the "LLM usage" section above for the full design (the
+  model proposes, `amounts_reconcile()` verifies) and
+  `docs/sample_tests/test4_llm_adjudication/` for a runnable example
+  including the real-model non-determinism finding.
 - **`app/evaluation.py`** — the actual point of this project, not an
   afterthought: "I matched 98%" is meaningless without knowing whether
   that 98% is *correct*. Takes a `ReconciliationResult` plus a
@@ -280,6 +306,17 @@ two) raises rather than silently doing nothing.
   a `record_type` column so it's filterable/sortable in Excel; matches
   first, then exceptions sorted highest-value-first, since the costliest
   discrepancy is what a controller should see first, not the last row.
+  `total_amount` for a match shows one real, canonical amount (the bank
+  credit if the match reaches the bank statement, otherwise the
+  settlement's net) rather than summing every source's amount together —
+  a real bug found by inspecting actual generated output: summing, say, a
+  ₹1000.00 gross ledger total and its ₹978.76 net settlement produced
+  ₹1978.76, a number with no real meaning, since it's the same money
+  counted twice at two different points. A second, separate bug found the
+  same way: `razorpay_settlement.py`'s paise→rupee conversion didn't
+  always produce a consistent 2-decimal amount (`720/100` → `7.2`, not
+  `7.20`), inherited by every downstream computation — fixed by
+  quantizing to the cent at conversion time.
 - **`app/analytics.py`** — `summarize(result)`, on-demand descriptive
   stats: match rate, match counts by tier, exception counts/values by
   code, mean/median exception size. Pure Python + `Decimal`

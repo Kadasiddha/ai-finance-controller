@@ -1,0 +1,6 @@
+record_type,tier_or_code,total_amount,sources_involved,transaction_ids,dates,confidence,detail
+match,exact,590.00,order_ledger;razorpay_settlement,order_ledger:#8001;razorpay_settlement:pay_a,2026-04-01;2026-04-01,,"Exact match on order_id='#8001' across order_ledger, razorpay_settlement."
+match,exact,410.00,order_ledger;razorpay_settlement,order_ledger:#8002;razorpay_settlement:pay_b,2026-04-01;2026-04-01,,"Exact match on order_id='#8002' across order_ledger, razorpay_settlement."
+exception,NO_COUNTERPART_FOUND,1000.00,bank_statement,bank_statement:2026-04-01:NEFT CR:COMBINED RAZORPAY SETT,2026-04-01,,No counterpart found in: razorpay_settlement.
+exception,NO_COUNTERPART_FOUND,590.00,razorpay_settlement,razorpay_settlement:pay_a,2026-04-01,,No counterpart found in: bank_statement.
+exception,NO_COUNTERPART_FOUND,410.00,razorpay_settlement,razorpay_settlement:pay_b,2026-04-01,,No counterpart found in: bank_statement.
