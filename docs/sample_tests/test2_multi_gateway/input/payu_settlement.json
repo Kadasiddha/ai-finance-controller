@@ -1,0 +1,29 @@
+{
+  "result": {
+    "data": [
+      {
+        "settlementId": "batch_e2e_1",
+        "settlementCompletedDate": "2026-02-03 09:30:00.000000",
+        "settlementAmount": "1782.00",
+        "utrNumber": "999888777",
+        "adjustmentAmount": "0.0",
+        "refundAmount": "0.0",
+        "chargebackAmount": "0.0",
+        "refundReversalAmount": "0.0",
+        "chargebackReversalAmount": "0.0",
+        "numberOfTransactions": 1,
+        "transaction": [
+          {
+            "payuId": "txn_p1",
+            "merchantTransactionId": "#7003",
+            "transactionAmount": "1800.00",
+            "merchantNetAmount": "1782.00",
+            "transactionDate": "2026-02-03 09:00:00.000000",
+            "action": "capture",
+            "transactionCurrency": "INR"
+          }
+        ]
+      }
+    ]
+  }
+}

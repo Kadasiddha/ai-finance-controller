@@ -1,0 +1,3 @@
+entity_id,type,debit,credit,amount,currency,fee,tax,on_hold,settled,created_at,settled_at,settlement_id,settlement_utr,order_id,payment_id,description
+pay_r1,payment,0,250000,250000,INR,5000,900,False,True,1769947200,1769947200,setl_e2e1,RZRP2001000001,#7001,pay_r1,
+pay_r2,payment,0,320000,320000,INR,6400,1152,False,True,1770292800,1770292800,setl_e2e2,RZRP2001000006,#7006,pay_r2,

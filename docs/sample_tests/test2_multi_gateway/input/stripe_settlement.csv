@@ -1,0 +1,2 @@
+balance_transaction_id,reporting_category,created,currency,gross,fee,net,order_id,trace_id,automatic_payout_id
+txn_s1,charge,2026-02-02 09:30:00,usd,75.00,1.65,73.35,#7002,,po_e2e01

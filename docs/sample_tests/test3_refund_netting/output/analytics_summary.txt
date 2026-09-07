@@ -1,0 +1,12 @@
+Analytics summary for test3_refund_netting
+============================================================
+matched_transaction_count: 10
+exception_transaction_count: 1
+match_rate_by_transaction_count: 0.909
+match_count_by_tier: {'exact': 4}
+matched_value_by_source: {'order_ledger': Decimal('1500.00'), 'razorpay_settlement': Decimal('2336.28'), 'bank_statement': Decimal('1168.14')}
+exception_count_by_code: {'NO_COUNTERPART_FOUND': 1}
+exception_value_by_source: {'bank_statement': Decimal('-150.00')}
+total_exception_value: -150.00
+mean_exception_value: -150
+median_exception_value: -150.00

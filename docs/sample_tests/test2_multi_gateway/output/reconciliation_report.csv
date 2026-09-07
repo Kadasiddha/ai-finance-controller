@@ -1,0 +1,11 @@
+record_type,tier_or_code,total_amount,sources_involved,transaction_ids,dates,confidence,detail
+match,exact,4941.00,order_ledger;razorpay_settlement,order_ledger:#7001;razorpay_settlement:pay_r1,2026-02-01;2026-02-01,,"Exact match on order_id='#7001' across order_ledger, razorpay_settlement."
+match,exact,6324.48,order_ledger;razorpay_settlement,order_ledger:#7006;razorpay_settlement:pay_r2,2026-02-05;2026-02-05,,"Exact match on order_id='#7006' across order_ledger, razorpay_settlement."
+match,exact,4882.00,bank_statement;razorpay_settlement,razorpay_settlement:pay_r1;bank_statement:2026-02-01:NEFT CR:RZRP2001000001 RAZORPA,2026-02-01;2026-02-01,,"Exact match on settlement_utr='RZRP2001000001' across bank_statement, razorpay_settlement."
+match,exact,148.35,order_ledger;stripe_settlement,order_ledger:#7002;stripe_settlement:txn_s1,2026-02-02;2026-02-02,,"Exact match on order_id='#7002' across order_ledger, stripe_settlement."
+match,fuzzy,146.70,bank_statement;stripe_settlement,stripe_settlement:txn_s1;bank_statement:2026-02-02:STRIPE PAYOUT,2026-02-02;2026-02-02,1.00,"Amount within tolerance (diff=0.00, limit=5.00) and date within 2 day(s) (2026-02-02 vs 2026-02-02)."
+match,exact,3582.00,order_ledger;payu_settlement,order_ledger:#7003;payu_settlement:txn_p1,2026-02-03;2026-02-03,,"Exact match on order_id='#7003' across order_ledger, payu_settlement."
+match,fuzzy,3564.00,bank_statement;payu_settlement,payu_settlement:txn_p1;bank_statement:2026-02-03:PAYU PAYOUT,2026-02-03;2026-02-03,1.00,"Amount within tolerance (diff=0.00, limit=5.00) and date within 2 day(s) (2026-02-03 vs 2026-02-03)."
+exception,AMOUNT_MISMATCH,6124.48,bank_statement;razorpay_settlement,razorpay_settlement:pay_r2;bank_statement:2026-02-05:NEFT CR:RZRP2001000006 RAZORPA,2026-02-05;2026-02-05,,"Rows share a reference, but the amounts don't add up -- possible duplicate or misapplied reference."
+exception,NO_COUNTERPART_FOUND,950.00,order_ledger,order_ledger:#7004,2026-02-04,,"No counterpart found in: payu_settlement, razorpay_settlement, stripe_settlement."
+exception,NO_COUNTERPART_FOUND,-1000,bank_statement,bank_statement:2026-02-06:ATM WDL CASH,2026-02-06,,"No counterpart found in: payu_settlement, razorpay_settlement, stripe_settlement."

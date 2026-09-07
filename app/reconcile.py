@@ -107,12 +107,30 @@ def reconcile(sources: dict[Source, list[Transaction]]) -> ReconciliationResult:
 
     all_matches: list[MatchResult] = []
     # A row unmatched in one leg it participated in is still fine if it
-    # matched in a *different* leg -- e.g. a settlement row can match its
-    # order but still be legitimately missing a bank credit (not yet
-    # settled). Track per-row which side(s) it's missing across all legs
-    # it was eligible for, not just whether it matched at least once.
-    unmatched_by_row: dict[str, Transaction] = {}
-    missing_from_by_row: dict[str, set[Source]] = defaultdict(set)
+    # matched in a *different* leg using the SAME key -- e.g. with 3
+    # settlement gateways configured, order_ledger sits on 3 parallel
+    # order_id legs (one per gateway), and a given order only ever
+    # belongs to one of them. Matching via any one of them means the
+    # other two are correctly "not applicable," not a real gap -- so
+    # "missing" is tracked per (row, key), and a match under a key
+    # suppresses "missing" reports under that SAME key. This is
+    # different from a settlement row's 2 legs, which use DIFFERENT keys
+    # (order_id vs settlement_utr) for genuinely different relationships
+    # -- matching one must NOT suppress a real gap in the other (a
+    # settlement row can be simultaneously "confirmed against its order"
+    # and "an exception on the payout side," not a contradiction).
+    # A row that landed in a REJECTED group (shared a key but failed
+    # amounts_reconcile) already has a specific, diagnosed AMOUNT_MISMATCH
+    # exception under that same key -- also emitting a generic "no
+    # counterpart found in the other same-key sources" for it would be
+    # redundant noise for the same underlying fact (see e.g. the bank row
+    # in a rejected Razorpay UTR group, which legitimately has no
+    # Stripe/PayU counterpart either, but that's not a SEPARATE problem
+    # worth a second exception).
+    matched_keys_by_row: dict[str, set[str]] = defaultdict(set)
+    diagnosed_keys_by_row: dict[str, set[str]] = defaultdict(set)
+    missing_from_by_row_and_key: dict[tuple[str, str], set[Source]] = defaultdict(set)
+    representative_txn_by_row: dict[str, Transaction] = {}
     rejected_groups: list[list[Transaction]] = []
 
     for leg in applicable_legs:
@@ -122,20 +140,30 @@ def reconcile(sources: dict[Source, list[Transaction]]) -> ReconciliationResult:
         all_matches.extend(matches)
         rejected_groups.extend(rejected)
 
+        for m in matches:
+            for t in m.transactions:
+                matched_keys_by_row[t.source_row_id].add(leg.key)
+
+        for group in rejected:
+            for t in group:
+                diagnosed_keys_by_row[t.source_row_id].add(leg.key)
+
         for t in left_unmatched:
-            unmatched_by_row[t.source_row_id] = t
-            missing_from_by_row[t.source_row_id].add(leg.right)
+            representative_txn_by_row[t.source_row_id] = t
+            missing_from_by_row_and_key[(t.source_row_id, leg.key)].add(leg.right)
         for t in right_unmatched:
-            unmatched_by_row[t.source_row_id] = t
-            missing_from_by_row[t.source_row_id].add(leg.left)
+            representative_txn_by_row[t.source_row_id] = t
+            missing_from_by_row_and_key[(t.source_row_id, leg.key)].add(leg.left)
 
     exceptions: list[ExceptionRecord] = [
         ExceptionRecord(
-            [t],
+            [representative_txn_by_row[row_id]],
             "NO_COUNTERPART_FOUND",
-            f"No counterpart found in: {', '.join(sorted(missing_from_by_row[row_id]))}.",
+            f"No counterpart found in: {', '.join(sorted(missing_sources))}.",
         )
-        for row_id, t in unmatched_by_row.items()
+        for (row_id, key), missing_sources in missing_from_by_row_and_key.items()
+        if key not in matched_keys_by_row.get(row_id, set())
+        and key not in diagnosed_keys_by_row.get(row_id, set())
     ]
 
     # Rejected groups shared a reference/UTR but the amounts didn't add up --

@@ -1,0 +1,12 @@
+Analytics summary for test2_multi_gateway
+============================================================
+matched_transaction_count: 14
+exception_transaction_count: 4
+match_rate_by_transaction_count: 0.778
+match_count_by_tier: {'exact': 5, 'fuzzy': 2}
+matched_value_by_source: {'order_ledger': Decimal('7575.00'), 'razorpay_settlement': Decimal('8006.48'), 'bank_statement': Decimal('4296.35'), 'stripe_settlement': Decimal('146.70'), 'payu_settlement': Decimal('3564.00')}
+exception_count_by_code: {'NO_COUNTERPART_FOUND': 2, 'AMOUNT_MISMATCH': 1}
+exception_value_by_source: {'order_ledger': Decimal('950.00'), 'bank_statement': Decimal('2000.00'), 'razorpay_settlement': Decimal('3124.48')}
+total_exception_value: 6074.48
+mean_exception_value: 2024.826666666666666666666667
+median_exception_value: 950.00

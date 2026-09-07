@@ -1,0 +1,12 @@
+Analytics summary for test1_single_gateway
+============================================================
+matched_transaction_count: 4
+exception_transaction_count: 1
+match_rate_by_transaction_count: 0.800
+match_count_by_tier: {'exact': 2}
+matched_value_by_source: {'order_ledger': Decimal('1000.00'), 'razorpay_settlement': Decimal('1957.52'), 'bank_statement': Decimal('978.76')}
+exception_count_by_code: {'NO_COUNTERPART_FOUND': 1}
+exception_value_by_source: {'order_ledger': Decimal('450.00')}
+total_exception_value: 450.00
+mean_exception_value: 450
+median_exception_value: 450.00

@@ -1,0 +1,6 @@
+record_type,tier_or_code,total_amount,sources_involved,transaction_ids,dates,confidence,detail
+match,exact,1678.76,order_ledger;razorpay_settlement,order_ledger:#2001;razorpay_settlement:pay_2001;razorpay_settlement:rfnd_2001,2026-03-05;2026-03-05;2026-03-05,,"Exact match on order_id='#2001' across order_ledger, razorpay_settlement."
+match,exact,989.38,order_ledger;razorpay_settlement,order_ledger:#2002;razorpay_settlement:pay_2002,2026-03-06;2026-03-06,,"Exact match on order_id='#2002' across order_ledger, razorpay_settlement."
+match,exact,1357.52,bank_statement;razorpay_settlement,razorpay_settlement:pay_2001;razorpay_settlement:rfnd_2001;bank_statement:2026-03-05:NEFT CR:RZRP5000000001 RAZORPA,2026-03-05;2026-03-05;2026-03-05,,"Exact match on settlement_utr='RZRP5000000001' across bank_statement, razorpay_settlement."
+match,exact,978.76,bank_statement;razorpay_settlement,razorpay_settlement:pay_2002;bank_statement:2026-03-06:NEFT CR:RZRP5000000002 RAZORPA,2026-03-06;2026-03-06,,"Exact match on settlement_utr='RZRP5000000002' across bank_statement, razorpay_settlement."
+exception,NO_COUNTERPART_FOUND,-150.00,bank_statement,bank_statement:2026-03-07:REFUND DR:RZRP5000000099 RAZOR,2026-03-07,,No counterpart found in: razorpay_settlement.
