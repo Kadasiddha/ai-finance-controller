@@ -129,9 +129,32 @@ a locally running Ollama server with `qwen2.5:7b-instruct` pulled
 (`ollama pull qwen2.5:7b-instruct`) — but it's off by default, so
 nothing else here requires it.
 
-There's no CLI or web app yet — this is a library today (see the Track
-2/3 backlog below for what's next). To actually run a reconciliation,
-call it from Python against your own exported files:
+There's no web app yet, but there is now a minimal CLI — run a
+reconciliation without writing any Python:
+
+```bash
+python -m app.cli \
+  --order-ledger docs/sample_tests/test2_multi_gateway/input/orders_export.csv \
+  --razorpay-settlement docs/sample_tests/test2_multi_gateway/input/razorpay_settlement.csv \
+  --stripe-settlement docs/sample_tests/test2_multi_gateway/input/stripe_settlement.csv \
+  --payu-settlement docs/sample_tests/test2_multi_gateway/input/payu_settlement.json \
+  --bank-statement docs/sample_tests/test2_multi_gateway/input/bank_statement.csv \
+  --report reconciliation_report.csv --summary --verbose
+```
+
+Each known source is its own explicit flag (`--order-ledger`,
+`--razorpay-settlement`, `--stripe-settlement`, `--payu-settlement`,
+`--bank-statement`) — pass any 2 or more, same "no guessing" principle as
+the rest of this project: nothing tries to auto-detect a file's gateway
+from its shape. `--start-date`/`--end-date` filter first, `--report`
+writes the CSV, `--summary` prints the analytics breakdown, `--verbose`
+prints every match/exception, `--llm` opts into tier 3 (needs Ollama
+running locally — if it isn't reachable, tier 3 just contributes nothing
+rather than failing the run). Run `python -m app.cli --help` for the
+full list.
+
+Or call it from Python directly against your own exported files, for
+more control (e.g. injecting a fake `call_llm` for testing tier 3):
 
 ```python
 from app.parsers.order_ledger import parse_order_ledger
@@ -165,7 +188,7 @@ Start with `docs/sample_tests/test1_single_gateway/`.
 
 ## Status
 
-**Working end-to-end (119 passing tests, verified from a clean venv):**
+**Working end-to-end (129 passing tests, verified from a clean venv):**
 upload/read any 2 or all 3 sources → get back confirmed matches and an
 honest, reason-tagged exception list. `app/reconcile.py` is the entry
 point — `reconcile({"order_ledger": [...], "razorpay_settlement": [...]})`
@@ -284,7 +307,19 @@ two) raises rather than silently doing nothing.
   default). See the "LLM usage" section above for the full design (the
   model proposes, `amounts_reconcile()` verifies) and
   `docs/sample_tests/test4_llm_adjudication/` for a runnable example
-  including the real-model non-determinism finding.
+  including the real-model non-determinism finding. Building the CLI
+  (below) surfaced a real gap: an unreachable Ollama server raised an
+  uncaught `requests.RequestException` that would have crashed
+  `reconcile()` outright — now caught the same way a malformed response
+  already was, degrading to "tier 3 contributes nothing" rather than
+  failing the run.
+- **`app/cli.py`** — a minimal CLI, no new dependency (stdlib
+  `argparse`): `python -m app.cli --order-ledger ... --razorpay-settlement
+  ... --report out.csv --summary`. Each known source is its own explicit
+  flag rather than one generic file flag with auto-detected gateway type
+  — same "never guess" principle as `KNOWN_LEGS` itself. Clean exit codes
+  and error messages (missing file, fewer than 2 sources, bad date
+  format) instead of raw tracebacks.
 - **`app/evaluation.py`** — the actual point of this project, not an
   afterthought: "I matched 98%" is meaningless without knowing whether
   that 98% is *correct*. Takes a `ReconciliationResult` plus a

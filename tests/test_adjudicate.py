@@ -7,6 +7,8 @@ import json
 from datetime import date
 from decimal import Decimal
 
+import requests
+
 from app.matching.adjudicate import adjudicate
 from app.models import Transaction
 
@@ -104,6 +106,24 @@ def test_low_confidence_proposal_is_rejected_even_if_amounts_reconcile():
 
     assert matches == []
     assert unmatched_left == left
+
+
+def test_unreachable_ollama_never_crashes_everything_stays_unmatched():
+    # A real gap found while building the CLI: an unreachable Ollama
+    # server (not running, wrong port, etc.) raises requests.RequestException
+    # from call_ollama -- this must degrade the same way a malformed
+    # response does, not propagate up and crash reconcile().
+    left = [_txn("razorpay_settlement", "pay_1", "500.00")]
+    right = [_txn("bank_statement", "bank_1", "500.00")]
+
+    def unreachable_llm(prompt: str) -> str:
+        raise requests.exceptions.ConnectionError("Connection refused")
+
+    matches, unmatched_left, unmatched_right = adjudicate(left, right, call_llm=unreachable_llm)
+
+    assert matches == []
+    assert unmatched_left == left
+    assert unmatched_right == right
 
 
 def test_malformed_json_response_never_crashes_everything_stays_unmatched():

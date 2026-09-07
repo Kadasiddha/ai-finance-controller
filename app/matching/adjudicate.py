@@ -33,6 +33,8 @@ instant and dependency-free. A caller opts in explicitly by passing
 import json
 from decimal import Decimal, InvalidOperation
 
+import requests
+
 from app.matching.exact import amounts_reconcile
 from app.models import MatchResult, Transaction
 
@@ -101,9 +103,13 @@ def adjudicate(
         raw_response = call_llm(_build_prompt(all_transactions))
         proposal = json.loads(raw_response)
         groups = proposal["groups"]
-    except (json.JSONDecodeError, KeyError, TypeError):
-        # Malformed response -- never crash, never guess. Everything
-        # stays unmatched, same as if tier 3 had never run.
+    except (json.JSONDecodeError, KeyError, TypeError, requests.exceptions.RequestException):
+        # Malformed response, OR Ollama isn't reachable at all (e.g. not
+        # running locally) -- never crash, never guess. Everything stays
+        # unmatched, same as if tier 3 had never run. A caller that cares
+        # whether tier 3 actually ran can check for "llm" in
+        # match_count_by_tier from app.analytics; this function's contract
+        # is "never force a match," not "guarantee the model was reachable."
         return [], left, right
 
     matches: list[MatchResult] = []
