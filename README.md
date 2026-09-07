@@ -7,14 +7,32 @@ or all 3 of these — select just the ledger and settlement report, just the
 settlement report and bank statement, or all three; the engine only runs
 the comparisons that make sense for whatever you select.
 
-## The problem
+## The problem this solves
 
-Settlements are batched (one bank credit = many orders, no order number in
-it), fees are deducted before payout (₹2,000 in sales arrives as ₹1,953),
-settlement lands T+2 after the payment, and refunds/chargebacks net out of
-unrelated batches. Reconciling these by hand is exactly the "spreadsheet
-archaeology" a financial controller does every day — this project automates
-that loop.
+A financial controller closing the books has to answer one question —
+"does the money in my ledger actually match what my bank received?" —
+across three records that never line up directly on their own:
+
+- **Settlements are batched**: one bank credit can represent dozens of
+  orders lumped together, with no order number anywhere in the bank
+  narration to unpick it.
+- **Fees are deducted before payout**: ₹2,000 in sales arrives in the
+  bank as ₹1,953 (or less) — comparing gross ledger totals to net bank
+  credits directly never matches, and isn't supposed to.
+- **Settlement lands late**: a payment today typically settles T+2 (or
+  later, or on a different cadence per gateway) — same-day comparisons
+  miss real matches.
+- **Refunds/chargebacks net out of unrelated batches**: a partial refund
+  can be bundled into a completely different day's payout than the
+  original sale.
+
+Doing this by hand is exactly the "spreadsheet archaeology" a controller
+does every close — manually eyeballing three CSVs, guessing which rows
+plausibly belong together, and hoping nothing was missed. This project
+automates that loop: normalize all three sources into one shape, match
+what can be proven to match, and — just as importantly — produce an
+honest, explained list of everything that couldn't be, instead of either
+silently dropping it or guessing.
 
 ## How it works — three passes, cost-ascending
 
@@ -34,6 +52,32 @@ reason, sorted by rupee value. The system must be able to answer both
 match these two?"* — explainability on both the accept and reject path is
 the core design principle, not an afterthought.
 
+## LLM usage — honest current status
+
+**No LLM call happens anywhere in this pipeline today.** Everything that
+works right now — parsing, exact matching, fuzzy matching, batch
+validation, the evaluation framework, analytics, the CSV report — is
+plain, deterministic Python. This matters for a reconciliation tool
+specifically: a controller needs to trust *why* two transactions were
+matched, and rule-based logic is provable and reproducible in a way an
+LLM call isn't — that's also why tiers 1 and 2 are deliberately
+non-LLM, not a stepping stone to "eventually replace with AI."
+
+Tier 3 (`app/matching/adjudicate.py`) is the one place an LLM is intended
+to be used, and it's a stub today — `adjudicate()` raises
+`NotImplementedError` on purpose. It's reserved for the genuinely
+ambiguous leftovers that survive both exact and fuzzy matching (e.g. a
+partial refund tangled into a split settlement, or a many-to-many batch
+fuzzy matching can't resolve one-to-one) — cases where real reasoning
+over context is warranted, not pattern matching. It's deliberately not
+built yet because designing its prompt against *guessed* ambiguous cases,
+before any real leftover data exists to see what "genuinely ambiguous"
+actually looks like here, would be exactly the kind of invented behavior
+this project's own principles reject. When it is built, its contract
+stays the same shape as tiers 1–2: transactions in, `(matches,
+still_unmatched)` out, every match carrying a `reasoning` string and
+every non-match traceable to why the model declined to force one.
+
 ## MVP scope (this repo)
 
 - Data normalization for the three real source formats (order ledger,
@@ -51,9 +95,53 @@ version): fee/GST verification, duplicate detection, cash-flow anomaly
 detection, an investigation/agent layer, audit trail, human approval
 workflow, AI governance/evaluation tooling.
 
+## Getting started
+
+```bash
+git clone https://github.com/Kadasiddha/ai-finance-controller.git
+cd ai-finance-controller
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+pytest tests/ -v          # confirm everything passes on your machine
+```
+
+There's no CLI or web app yet — this is a library today (see the Track
+2/3 backlog below for what's next). To actually run a reconciliation,
+call it from Python against your own exported files:
+
+```python
+from app.parsers.order_ledger import parse_order_ledger
+from app.parsers.razorpay_settlement import parse_settlement_report
+from app.parsers.bank_statement import parse_bank_statement
+from app.reconcile import reconcile
+from app.report import write_csv_report
+from app.analytics import summarize
+
+sources = {
+    "order_ledger": parse_order_ledger("orders_export.csv"),
+    "razorpay_settlement": parse_settlement_report("razorpay_settlement.csv"),
+    "bank_statement": parse_bank_statement("bank_statement.csv"),
+}
+result = reconcile(sources)                       # confirmed matches + a reasoned exception list
+write_csv_report(result, "reconciliation_report.csv")  # downloadable report
+print(summarize(result))                           # match rate, per-source/code breakdowns
+```
+
+Swap in `parse_stripe_settlement`/`parse_stripe_settlement.csv` or
+`parse_payu_settlement`/`payu_settlement.json` for other gateways, or add
+multiple gateways to the same `sources` dict to reconcile them together
+(see `docs/sample_tests/test2_multi_gateway/`). Omit `bank_statement` (or
+any source) for a narrower 2-way reconciliation instead of the full
+3-way.
+
+**Don't have real export files handy?** `docs/sample_tests/` has 3
+complete, runnable example scenarios — real input files and the actual
+current output the tool produces from them, not hand-written examples.
+Start with `docs/sample_tests/test1_single_gateway/`.
+
 ## Status
 
-**Working end-to-end (103 passing tests, verified from a clean venv):**
+**Working end-to-end (107 passing tests, verified from a clean venv):**
 upload/read any 2 or all 3 sources → get back confirmed matches and an
 honest, reason-tagged exception list. `app/reconcile.py` is the entry
 point — `reconcile({"order_ledger": [...], "razorpay_settlement": [...]})`
@@ -158,6 +246,15 @@ two) raises rather than silently doing nothing.
   it holds even when the input format itself is structurally different
   (nested JSON, not a flat CSV row) — the pipeline only ever sees the
   normalized `list[Transaction]` output, never the source format.
+  Running all 3 gateways together found and fixed a real bug: with
+  multiple gateways configured, `order_ledger`/`bank_statement` sit on
+  several parallel same-key legs (one per gateway), and a row that
+  matched its real gateway was also being reported as
+  `NO_COUNTERPART_FOUND` for the others it never belonged to. Fixed by
+  tracking matches/rejections/gaps per `(row, key)` rather than per row —
+  see `docs/sample_tests/test2_multi_gateway/README.md` for the full
+  before/after, and `tests/test_reconcile_multi_gateway.py` for the
+  regression coverage.
 - **`app/matching/adjudicate.py`** (tier 3, LLM adjudication) —
   deliberately unimplemented. Needs real leftover-after-tiers-1-2 examples
   to design the prompt against, not a guess at what "genuinely ambiguous"
