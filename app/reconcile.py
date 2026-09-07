@@ -49,6 +49,8 @@ KNOWN_LEGS: list[Leg] = [
     Leg("razorpay_settlement", "bank_statement", "settlement_utr", amounts_reconcile),
     Leg("order_ledger", "stripe_settlement", "order_id"),
     Leg("stripe_settlement", "bank_statement", "settlement_utr", amounts_reconcile),
+    Leg("order_ledger", "payu_settlement", "order_id"),
+    Leg("payu_settlement", "bank_statement", "settlement_utr", amounts_reconcile),
 ]
 
 

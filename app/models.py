@@ -3,7 +3,9 @@ from datetime import date
 from decimal import Decimal
 from typing import Any, Literal
 
-Source = Literal["order_ledger", "razorpay_settlement", "bank_statement", "stripe_settlement"]
+Source = Literal[
+    "order_ledger", "razorpay_settlement", "bank_statement", "stripe_settlement", "payu_settlement"
+]
 MatchTier = Literal["exact", "fuzzy", "llm"]
 
 # Structured exception categories -- lets exceptions be counted/aggregated
